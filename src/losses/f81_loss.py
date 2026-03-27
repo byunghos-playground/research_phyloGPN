@@ -8,19 +8,27 @@ F81 phylogenetic likelihood loss (PhyloGPN 훈련용).
   구체적인 구현 코드는 공개되지 않음. 이 파일은 논문의 수식을 바탕으로
   직접 구현한 것임.
 
-[Loss 정의 — 논문 Eq.(4) 참고]
+[Loss 정의 — 논문 Eq.(4)]
   L(W; D) = -(1/n) Σ_i log P_F81(y^(i) | f_W(x^(i)), T^(i))
-           + (1/n) Σ_i log π^(i)(f_W)
+           + (1/n) Σ_i log π^(ref,i)(f_W)
 
   여기서:
     f_W(x^(i)) = θ (F81 파라미터)
     π^(i)      = softmax(θ) = stationary frequency
     P_F81      = Felsenstein pruning으로 계산한 alignment column likelihood
-    두 번째 항 = conditioning term (reference nucleotide를 conditioning out)
+    두 번째 항 = conditioning term
 
-  본 구현에서는 단순화하여 첫 번째 항(NLL)만 사용.
-  (conditioning term은 훈련 안정화를 위한 보조 항이며,
-   실제 검증 목적에서는 NLL만으로도 충분)
+[conditioning term의 역할]
+  reference genome x는 모델 input이면서 MSA y의 leaf 0에도 포함됨.
+  Felsenstein pruning에서 ref 위치 염기(예: A)는 one-hot leaf likelihood로
+  처리되므로, 모델이 ref 염기에 π mass를 집중하면 P_F81이 인위적으로 높아짐.
+
+  conditioning term "+ (1/n) Σ log π_ref" 를 loss에 더함으로써
+  이 shortcut을 penalize:
+    - minimize L 방향에서 log π_ref가 크면(π_ref → 1) 불리 → ref 염기 편향 억제
+    - 결과적으로 모델은 다른 종들의 alignment에서 진화적 신호를 학습
+
+  ref species는 msa_codes의 index 0 (fasta_to_npz.py의 default ref_idx=0 대응).
 
 [버그 수정]
   구버전 f81_site_loglik_batch():
@@ -112,9 +120,20 @@ class F81LikelihoodLoss(nn.Module):
             eps        = self.eps,
         )
 
-        # 4) NLL 평균 (유효 사이트만)
-        nll       = -loglik * valid_mask.float()
-        n_valid   = valid_mask.sum()
+        # 4) Conditioning term: + (1/n) Σ log π^(ref)  [논문 Eq.(4) 두 번째 항]
+        #    ref species = msa_codes[:, :, 0] (fasta_to_npz.py default: ref_idx=0)
+        ref_codes  = msa_codes[:, :, 0]                            # (B, L), 0-5
+        known_ref  = (ref_codes < 4)                               # (B, L) bool — N/gap 제외
+        safe_codes = ref_codes.clamp(0, 3)                         # gather 안전 인덱스
+        pi_ref = torch.gather(
+            pi, dim=-1, index=safe_codes.unsqueeze(-1)
+        ).squeeze(-1)                                              # (B, L)
+        # valid이고 ref 염기가 known인 위치에만 conditioning 적용
+        log_pi_ref = torch.log(pi_ref.clamp(min=self.eps)) * (valid_mask & known_ref).float()
+
+        # 5) 총 loss = NLL + conditioning, 유효 사이트 평균
+        loss_per_site = -loglik * valid_mask.float() + log_pi_ref
+        n_valid       = valid_mask.sum()
         if n_valid == 0:
-            return nll.mean()
-        return nll.sum() / n_valid
+            return loss_per_site.mean()
+        return loss_per_site.sum() / n_valid

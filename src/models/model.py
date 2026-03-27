@@ -226,7 +226,6 @@ class RCEByteNet(nn.Module):
         nn.init.normal_(self.embedding.weight, std=2 ** 0.5)
         if pad_token_idx is not None:
             self.embedding.weight.data[pad_token_idx].zero_()
-        self.embedding.requires_grad = False
 
         # 40 ByteNet blocks (dilated residual convolutions)
         self.blocks = nn.Sequential(*[
