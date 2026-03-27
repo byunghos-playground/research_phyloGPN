@@ -176,6 +176,26 @@ research_phyloGPN/
 
 ## 데이터 파이프라인
 
+### 전체 흐름
+
+```
+[Step 1+2] simulate.sbatch (SLURM array, 병렬)
+  simulate_f81.py  →  chunk_NNN.fasta + chunk_NNN_pi.txt
+  fasta_to_npz.py  →  data/processed/block_NNN.npz
+
+[Step 3] split_data.py (array 완료 후 1회 실행)
+  data/processed/  →  data/train/ + data/valid/ + data/test/
+
+[Step 4] 훈련 (세 모델 독립적으로 제출)
+  train_f81.sbatch
+  train_f81_supervised.sbatch
+  train_naive.sbatch
+```
+
+**권장 규모**: 100 chunks × 10,000 sites = **1,000,000 sites**
+- array job은 병렬 실행 → 청크 수와 무관하게 벽시계 ~1시간
+- 분할: train 80블록 (~760K 윈도우) / valid 10블록 / test 10블록
+
 ### 데이터 구조
 
 각 `.npz` 블록 파일 내용:
@@ -189,39 +209,38 @@ research_phyloGPN/
 
 `msa_codes[:, 0]` = ref 종 (ref_seq와 동일 종). F81 loss의 conditioning term에서 사용.
 
-### Step 1: F81 시뮬레이션
+### Step 1+2: 시뮬레이션 + npz 변환
 
 각 사이트마다 독립적인 π를 Dirichlet(1,1,1,1)에서 샘플하여 pyvolve로 241종 시뮬레이션.
+`simulate.sbatch`가 시뮬레이션과 npz 변환을 한 번에 처리.
 
 ```bash
+# SLURM array job (100 chunks = 1,000,000 사이트 권장)
+sbatch --array=0-99 scripts/simulate.sbatch
+
 # 단일 실행 (테스트용)
 python data/simulate/simulate_f81.py \
     --tree_path data/trees/241-mammalian-2020v2.1.nh.txt \
     --L 10000 \
     --out_prefix data/raw/chunk_000 \
     --seed 0
-
-# SLURM array job (10 chunks = 100,000 사이트)
-sbatch --array=0-9 scripts/simulate.sbatch
-```
-
-출력: `data/raw/chunk_NNN.fasta`, `data/raw/chunk_NNN_pi.txt`
-
-### Step 2: .npz 변환
-
-```bash
 python data/simulate/fasta_to_npz.py \
     --fasta data/raw/chunk_000.fasta \
     --pi    data/raw/chunk_000_pi.txt \
     --out   data/processed/block_000.npz
 ```
 
+출력: `data/processed/block_NNN.npz` (100개)
+
 ### Step 3: Train/Valid/Test 분할
+
+array job 완료 후 1회 실행.
 
 ```bash
 python data/simulate/split_data.py \
     --processed_dir data/processed \
-    --train_ratio 0.8 --valid_ratio 0.1 --seed 42
+    --train_ratio 0.8 --valid_ratio 0.1 --seed 42 \
+    --copy    # HPCC NFS 환경에서는 symlink 대신 복사 권장
 ```
 
 ---
