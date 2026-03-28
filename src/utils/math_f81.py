@@ -108,10 +108,12 @@ def f81_site_loglik_vectorized(
     root     = tree.root_index
 
     # -----------------------------------------------------------------------
-    # Step 1. Leaf likelihood 초기화 (B, L, n_nodes, 4)
+    # Step 1. Leaf likelihood 초기화
     # -----------------------------------------------------------------------
-    # 메모리: B=8, L=481, n_nodes≈482, 4 → 약 30 MB (float32 기준) → 허용 범위
-    L_node = torch.ones(B, L, n_nodes, 4, dtype=dtype, device=device)
+    # dict 사용: pre-allocated tensor + inplace write는 autograd version 충돌을 일으킴
+    # (L_node[:, :, child, :]가 pi computation graph에 연결된 채로
+    #  L_node[:, :, node, :] = lik 로 inplace 수정 → backward 시 version mismatch)
+    L_node: Dict[int, torch.Tensor] = {}
 
     for s, leaf_idx in enumerate(tree.leaf_order):
         codes = msa_codes[:, :, s]          # (B, L), int
@@ -122,8 +124,7 @@ def f81_site_loglik_vectorized(
 
         is_known = (codes < 4).unsqueeze(-1).expand_as(one_hot)  # (B, L, 4) bool
         # known → one-hot, unknown → 1.0 (모든 상태 equally possible)
-        L_node[:, :, leaf_idx, :] = torch.where(is_known, one_hot,
-                                                 torch.ones_like(one_hot))
+        L_node[leaf_idx] = torch.where(is_known, one_hot, torch.ones_like(one_hot))
 
     # -----------------------------------------------------------------------
     # Step 2. 각 branch의 exp(-μt) 미리 계산 (root 제외)
@@ -153,7 +154,7 @@ def f81_site_loglik_vectorized(
         lik = torch.ones(B, L, 4, dtype=dtype, device=device)  # (B, L, 4)
 
         for child in children:
-            L_child = L_node[:, :, child, :]   # (B, L, 4)
+            L_child = L_node[child]             # (B, L, 4)
             e       = e_vals[child]             # scalar
 
             # F81 전이의 핵심 공식:
@@ -162,12 +163,12 @@ def f81_site_loglik_vectorized(
             contrib = (1.0 - e) * dot + e * L_child             # (B, L, 4)
             lik     = lik * contrib
 
-        L_node[:, :, node, :] = lik
+        L_node[node] = lik
 
     # -----------------------------------------------------------------------
     # Step 4. Root에서 site probability 계산
     # -----------------------------------------------------------------------
-    L_root   = L_node[:, :, root, :]            # (B, L, 4)
+    L_root   = L_node[root]                     # (B, L, 4)
     site_prob = (pi * L_root).sum(dim=-1)       # (B, L)
     site_prob = site_prob.clamp(min=eps)
     loglik    = torch.log(site_prob)            # (B, L)

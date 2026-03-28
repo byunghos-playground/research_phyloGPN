@@ -46,8 +46,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from src.models.configuration import PhyloGPNConfig
 from src.models.model         import PhyloGPNModel
 from src.models.tokenizer     import PhyloGPNTokenizer
-from src.data.dataset         import SimF81Dataset
-from src.data.collate         import collate_sim_f81
+from src.data.windowed_dataset import WindowedSimF81Dataset
+from src.data.collate          import collate_windowed_sim_f81
 from src.losses.supervised_loss import SupervisedPiLoss
 from src.utils.checkpoint     import save_checkpoint, BestModelTracker
 from src.utils.math_f81       import logits_dict_to_pi
@@ -58,11 +58,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train_dir",   type=str, required=True)
     p.add_argument("--valid_dir",   type=str, default=None)
     p.add_argument("--out_dir",     type=str, default="checkpoints/naive")
-    p.add_argument("--batch_size",  type=int, default=4)
-    p.add_argument("--epochs",      type=int, default=20)
-    p.add_argument("--lr",          type=float, default=1e-4)
-    p.add_argument("--pad_half",    type=int, default=240,
-                   help="ref_seq 양쪽 패딩 길이 (기본값 240 = RF//2)")
+    p.add_argument("--batch_size",   type=int, default=8)
+    p.add_argument("--epochs",       type=int, default=20)
+    p.add_argument("--lr",           type=float, default=1e-4)
+    p.add_argument("--window_size",  type=int, default=481,
+                   help="슬라이딩 윈도우 크기 (기본값 481 = RF)")
+    p.add_argument("--stride",       type=int, default=1,
+                   help="슬라이딩 윈도우 보폭 (1=모든 위치)")
     p.add_argument("--num_workers", type=int, default=2)
     p.add_argument("--device",      type=str,
                    default="cuda" if torch.cuda.is_available() else "cpu")
@@ -87,38 +89,40 @@ def main() -> None:
     # ------------------------------------------------------------------
     tokenizer = PhyloGPNTokenizer(model_max_length=10 ** 9)
 
-    train_ds = SimF81Dataset(
-        npz_paths = find_npz(args.train_dir),
-        tokenizer = tokenizer,
-        pad_half  = args.pad_half,
-        use_msa   = False,   # supervised: alignment 불필요
+    train_ds = WindowedSimF81Dataset(
+        npz_paths   = find_npz(args.train_dir),
+        tokenizer   = tokenizer,
+        window_size = args.window_size,
+        use_msa     = False,   # supervised: alignment 불필요
+        stride      = args.stride,
     )
     train_loader = DataLoader(
         train_ds,
         batch_size  = args.batch_size,
         shuffle     = True,
         num_workers = args.num_workers,
-        collate_fn  = collate_sim_f81,
+        collate_fn  = collate_windowed_sim_f81,
         pin_memory  = (args.device == "cuda"),
     )
 
     valid_loader = None
     if args.valid_dir:
-        valid_ds = SimF81Dataset(
-            npz_paths = find_npz(args.valid_dir),
-            tokenizer = tokenizer,
-            pad_half  = args.pad_half,
-            use_msa   = False,
+        valid_ds = WindowedSimF81Dataset(
+            npz_paths   = find_npz(args.valid_dir),
+            tokenizer   = tokenizer,
+            window_size = args.window_size,
+            use_msa     = False,
+            stride      = args.stride * 5,   # 검증은 stride 크게 (빠르게)
         )
         valid_loader = DataLoader(
             valid_ds,
             batch_size  = args.batch_size,
             shuffle     = False,
             num_workers = args.num_workers,
-            collate_fn  = collate_sim_f81,
+            collate_fn  = collate_windowed_sim_f81,
         )
 
-    print(f"훈련 블록 수: {len(train_ds)}")
+    print(f"훈련 윈도우 수: {len(train_ds):,}")
 
     # ------------------------------------------------------------------
     # 2. 모델 & Loss & Optimizer
@@ -148,24 +152,23 @@ def main() -> None:
         n_batches  = 0
 
         for batch in train_loader:
-            input_ids  = batch["input_ids"].to(device)    # (B, Lp)
-            pi_true    = batch["pi_true"].to(device)      # (B, L, 4)
-            valid_mask = batch["valid_mask"].to(device)   # (B, L)
+            input_ids  = batch["input_ids"].to(device)    # (B, W=481)
+            pi_true    = batch["pi_true"].to(device)      # (B, W, 4)
+            center_idx = batch["center_idx"].to(device)   # (B,)
+            B          = input_ids.shape[0]
 
             optimizer.zero_grad()
-            logits_dict = model(input_ids)   # {'A','C','G','T'}: (B, L_out)
+            logits_dict = model(input_ids)   # {'A','C','G','T'}: (B, 1)
+            # W=481 → valid conv → 1 출력 (center site θ)
 
-            # logits → π (B, L_out, 4)
-            pi_pred = logits_dict_to_pi(logits_dict)   # (B, L_out, 4)
+            pi_pred = logits_dict_to_pi(logits_dict)   # (B, 1, 4)
 
-            # L_out ≠ L 이면 중앙 crop
-            B, L, _ = pi_true.shape
-            L_out   = pi_pred.shape[1]
-            if L_out != L:
-                crop    = (L_out - L) // 2
-                pi_pred = pi_pred[:, crop: crop + L, :]
+            # center site의 π_true만 추출
+            c = center_idx[0].item()   # 항상 240
+            pi_true_center = pi_true[:, c:c+1, :]                          # (B, 1, 4)
+            valid_center   = torch.ones(B, 1, dtype=torch.bool, device=device)
 
-            loss = loss_fn(pi_pred, pi_true, valid_mask)
+            loss = loss_fn(pi_pred, pi_true_center, valid_center)
             loss.backward()
             optimizer.step()
 
@@ -184,18 +187,17 @@ def main() -> None:
                 for batch in valid_loader:
                     input_ids  = batch["input_ids"].to(device)
                     pi_true    = batch["pi_true"].to(device)
-                    valid_mask = batch["valid_mask"].to(device)
+                    center_idx = batch["center_idx"].to(device)
+                    B          = input_ids.shape[0]
 
                     logits_dict = model(input_ids)
-                    pi_pred     = logits_dict_to_pi(logits_dict)
+                    pi_pred     = logits_dict_to_pi(logits_dict)   # (B, 1, 4)
 
-                    B, L, _ = pi_true.shape
-                    L_out   = pi_pred.shape[1]
-                    if L_out != L:
-                        crop    = (L_out - L) // 2
-                        pi_pred = pi_pred[:, crop: crop + L, :]
+                    c = center_idx[0].item()
+                    pi_true_center = pi_true[:, c:c+1, :]
+                    valid_center   = torch.ones(B, 1, dtype=torch.bool, device=device)
 
-                    loss    = loss_fn(pi_pred, pi_true, valid_mask)
+                    loss     = loss_fn(pi_pred, pi_true_center, valid_center)
                     val_loss += loss.item()
                     val_n    += 1
 

@@ -26,7 +26,7 @@ python train_naive.py \
     --train_dir   data/train \
     --valid_dir   data/valid \
     --out_dir     checkpoints/naive \
-    --batch_size  4 \
+    --batch_size  8 \
     --epochs      20 \
     --lr          1e-4 \
     --num_workers 4
