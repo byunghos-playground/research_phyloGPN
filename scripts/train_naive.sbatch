@@ -6,7 +6,7 @@
 # 제출 방법:
 #   sbatch scripts/train_naive.sbatch
 #
-#SBATCH --time=23:59:00
+#SBATCH --time=2:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=32G
@@ -27,7 +27,7 @@ python train_naive.py \
     --valid_dir   data/valid \
     --out_dir     checkpoints/naive \
     --batch_size  8 \
-    --epochs      20 \
+    --epochs      1 \
     --lr          1e-4 \
     --num_workers 4
 
