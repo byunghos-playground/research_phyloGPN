@@ -76,11 +76,20 @@ class SimF81Dataset(Dataset):
         self.pad_half  = pad_half
         self.use_msa   = use_msa
 
+        # 전체 블록을 메모리에 미리 로드 (디스크 I/O 병목 제거)
+        print(f"블록 캐시 로딩 중... ({len(self.npz_paths)}개 파일)")
+        self._cache: List[Dict[str, Any]] = [
+            self._load_block(i) for i in range(len(self.npz_paths))
+        ]
+        print("캐시 완료.")
+
     def __len__(self) -> int:
         return len(self.npz_paths)
 
     def _load_block(self, idx: int) -> Dict[str, Any]:
-        """npz 파일에서 raw 데이터 로드 (캐시 없이 매번 읽음)."""
+        """블록 데이터 반환. 캐시가 있으면 캐시에서, 없으면 디스크에서 로드."""
+        if hasattr(self, "_cache"):
+            return self._cache[idx]
         path = self.npz_paths[idx]
         data = np.load(path, allow_pickle=True)
 
