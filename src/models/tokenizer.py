@@ -70,13 +70,11 @@ class PhyloGPNTokenizer(PreTrainedTokenizer):
     def _tokenize(self, seq: str) -> List[str]:
         """
         문자열 시퀀스를 문자 리스트로 분리.
-        모델 입력이 최소 481 bp여야 함을 체크.
-        (SimF81Dataset: L + 2*240 ≥ 481, WindowedDataset: 정확히 481)
+
+        [주의] transformers는 pad_token('-') 등 special token으로 텍스트를 먼저 분리한 뒤
+        각 조각에 _tokenize를 호출한다. 따라서 이 메서드는 481보다 짧은 조각을 받을 수 있음.
+        길이 체크는 _tokenize 내부에서 하면 안 됨.
         """
-        assert len(seq) >= 481, (
-            f"입력 시퀀스 길이 {len(seq)} < 481 bp. "
-            "패딩 포함 최소 481 bp가 필요합니다."
-        )
         return list(seq)
 
     def _convert_token_to_id(self, token: str) -> int:
