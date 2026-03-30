@@ -4,9 +4,9 @@ train_f81.py
 모델 A 훈련: F81 phylogenetic likelihood loss.
 
 [훈련 방식]
-  - WindowedSimF81Dataset: 각 위치를 중심으로 481bp 윈도우 슬라이딩
-  - Center-site loss: 각 윈도우의 중앙 위치(index 240)에만 F81 loss 계산
-    → 481bp 맥락을 보고 중앙 위치의 F81 θ를 예측하도록 학습
+  - SimF81Dataset: 청크당 π 하나, L=481 사이트 (pad_half=240으로 패딩)
+  - All-site loss: 청크 내 모든 L개 위치에 F81 loss 계산 (valid_mask 기준)
+    → 같은 π에서 생성된 481개 사이트 전체에서 gradient 신호 획득
   - Felsenstein pruning으로 alignment column의 log-likelihood 계산
 
 [중요]
@@ -21,8 +21,7 @@ Usage:
     --out_dir     checkpoints/f81 \\
     --batch_size  8 \\
     --epochs      20 \\
-    --lr          1e-4 \\
-    --stride      1
+    --lr          1e-4
 """
 
 import argparse
@@ -41,8 +40,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from src.models.configuration import PhyloGPNConfig
 from src.models.model         import PhyloGPNModel
 from src.models.tokenizer     import PhyloGPNTokenizer
-from src.data.windowed_dataset import WindowedSimF81Dataset
-from src.data.collate          import collate_windowed_sim_f81
+from src.data.dataset          import SimF81Dataset
+from src.data.collate          import collate_sim_f81
 from src.losses.f81_loss       import F81LikelihoodLoss
 from src.utils.tree_utils      import load_tree_struct_from_newick
 from src.utils.checkpoint      import save_checkpoint, BestModelTracker
@@ -57,14 +56,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--epochs",     type=int, default=20)
     p.add_argument("--lr",         type=float, default=1e-4)
-    p.add_argument("--stride",     type=int, default=1,
-                   help="슬라이딩 윈도우 보폭 (1=모든 위치, 클수록 빠름)")
     p.add_argument("--num_workers", type=int, default=2)
     p.add_argument("--device",     type=str,
                    default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--resume",     type=str, default=None,
                    help="재개할 체크포인트 경로")
-    p.add_argument("--window_size", type=int, default=481)
     return p.parse_args()
 
 
@@ -103,40 +99,38 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 3. Dataset / DataLoader
     # ------------------------------------------------------------------
-    train_ds = WindowedSimF81Dataset(
-        npz_paths   = train_paths,
-        tokenizer   = tokenizer,
-        window_size = args.window_size,
-        use_msa     = True,      # F81 loss에 alignment 필요
-        stride      = args.stride,
+    train_ds = SimF81Dataset(
+        npz_paths = train_paths,
+        tokenizer = tokenizer,
+        pad_half  = 240,
+        use_msa   = True,      # F81 loss에 alignment 필요
     )
     train_loader = DataLoader(
         train_ds,
         batch_size  = args.batch_size,
         shuffle     = True,
         num_workers = args.num_workers,
-        collate_fn  = collate_windowed_sim_f81,
+        collate_fn  = collate_sim_f81,
         pin_memory  = (args.device == "cuda"),
     )
 
     valid_loader = None
     if args.valid_dir:
-        valid_ds = WindowedSimF81Dataset(
-            npz_paths   = find_npz(args.valid_dir),
-            tokenizer   = tokenizer,
-            window_size = args.window_size,
-            use_msa     = True,
-            stride      = args.stride * 5,   # 검증은 stride 크게 (빠르게)
+        valid_ds = SimF81Dataset(
+            npz_paths = find_npz(args.valid_dir),
+            tokenizer = tokenizer,
+            pad_half  = 240,
+            use_msa   = True,
         )
         valid_loader = DataLoader(
             valid_ds,
             batch_size  = args.batch_size,
             shuffle     = False,
             num_workers = args.num_workers,
-            collate_fn  = collate_windowed_sim_f81,
+            collate_fn  = collate_sim_f81,
         )
 
-    print(f"훈련 윈도우 수: {len(train_ds):,}")
+    print(f"훈련 청크 수: {len(train_ds):,}")
 
     # ------------------------------------------------------------------
     # 4. 모델
@@ -169,25 +163,17 @@ def main() -> None:
         n_batches  = 0
 
         for batch in train_loader:
-            input_ids  = batch["input_ids"].to(device)    # (B, W)
-            msa_codes  = batch["msa_codes"].to(device)    # (B, W, S)
-            center_idx = batch["center_idx"].to(device)   # (B,)
-            B          = input_ids.shape[0]
+            input_ids  = batch["input_ids"].to(device)    # (B, L+480)
+            msa_codes  = batch["msa_codes"].to(device)    # (B, L, S)
+            valid_mask = batch["valid_mask"].to(device)   # (B, L)
 
             optimizer.zero_grad()
-            logits_dict = model(input_ids)   # {'A','C','G','T'}: (B, 1)
-            # W=481 입력 → valid conv → 1 출력 (center site θ)
-
-            # F81 loss는 center column만 필요:
-            #   pi  (B, 1, 4)  vs  msa_center (B, 1, S) → 크기 일치
-            c = center_idx[0].item()           # 항상 240
-            msa_center    = msa_codes[:, c:c+1, :]           # (B, 1, S)
-            valid_center  = torch.ones(B, 1, dtype=torch.bool, device=device)
+            logits_dict = model(input_ids)   # {'A','C','G','T'}: (B, L)
 
             loss = loss_fn(
                 logits_dict = logits_dict,
-                msa_codes   = msa_center,
-                valid_mask  = valid_center,
+                msa_codes   = msa_codes,
+                valid_mask  = valid_mask,
             )
             loss.backward()
             optimizer.step()
@@ -207,14 +193,10 @@ def main() -> None:
                 for batch in valid_loader:
                     input_ids  = batch["input_ids"].to(device)
                     msa_codes  = batch["msa_codes"].to(device)
-                    center_idx = batch["center_idx"].to(device)
-                    B          = input_ids.shape[0]
+                    valid_mask = batch["valid_mask"].to(device)
 
                     logits_dict = model(input_ids)
-                    c = center_idx[0].item()
-                    msa_center   = msa_codes[:, c:c+1, :]
-                    valid_center = torch.ones(B, 1, dtype=torch.bool, device=device)
-                    loss = loss_fn(logits_dict, msa_center, valid_center)
+                    loss = loss_fn(logits_dict, msa_codes, valid_mask)
                     val_loss += loss.item()
                     val_n    += 1
 

@@ -3,6 +3,11 @@ src/data/windowed_dataset.py
 
 WindowedSimF81Dataset: PhyloGPN 원본 스타일 sliding-window 데이터셋.
 
+[현재 미사용]
+  현재 시뮬레이션 설계 (청크당 π 하나, L=481) 에서는 SimF81Dataset을 직접 사용.
+  각 청크가 이미 481bp이므로 sliding window 불필요.
+  향후 실제 게놈 데이터 (긴 서열에서 sliding window 필요) 시 재사용 가능.
+
 [Sliding Window 방식]
   각 블록(길이 L)의 모든 위치 center ∈ [0, L-1] 에 대해
   길이 window_size(=481)의 윈도우를 생성.

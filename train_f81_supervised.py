@@ -8,6 +8,7 @@ train_f81_supervised.py
   - 모델은 ref_seq 481bp만 input으로 받음 (F81과 동일)
   - loss = log P_F81(alignment | π_true, T) - log P_F81(alignment | π_pred, T)
   - π_true를 직접 비교하지 않고, likelihood를 통해 간접적으로 활용
+  - SimF81Dataset: 청크당 π 하나, L개 사이트 전체에 loss 계산
 
 [F81 vs f81_supervised vs naive 비교]
   F81:            loss = -log P_F81(alignment | π_pred, T)           ← π_true 없음
@@ -23,8 +24,7 @@ Usage:
     --out_dir     checkpoints/f81_supervised \\
     --batch_size  8 \\
     --epochs      20 \\
-    --lr          1e-4 \\
-    --stride      1
+    --lr          1e-4
 """
 
 import argparse
@@ -42,8 +42,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from src.models.configuration   import PhyloGPNConfig
 from src.models.model            import PhyloGPNModel
 from src.models.tokenizer        import PhyloGPNTokenizer
-from src.data.windowed_dataset   import WindowedSimF81Dataset
-from src.data.collate            import collate_windowed_sim_f81
+from src.data.dataset            import SimF81Dataset
+from src.data.collate            import collate_sim_f81
 from src.losses.f81_supervised_loss import F81SupervisedLoss
 from src.utils.tree_utils        import load_tree_struct_from_newick
 from src.utils.checkpoint        import save_checkpoint, BestModelTracker
@@ -58,12 +58,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch_size",  type=int, default=8)
     p.add_argument("--epochs",      type=int, default=20)
     p.add_argument("--lr",          type=float, default=1e-4)
-    p.add_argument("--stride",      type=int, default=1)
     p.add_argument("--num_workers", type=int, default=2)
     p.add_argument("--device",      type=str,
                    default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--resume",      type=str, default=None)
-    p.add_argument("--window_size", type=int, default=481)
     return p.parse_args()
 
 
@@ -98,42 +96,40 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 3. Dataset / DataLoader
     #    use_msa=True: F81 likelihood 계산에 alignment 필요
-    #    pi_true도 배치에 포함됨 (WindowedSimF81Dataset 기본 포함)
+    #    pi_true도 배치에 포함됨 (SimF81Dataset 기본 포함)
     # ------------------------------------------------------------------
-    train_ds = WindowedSimF81Dataset(
-        npz_paths   = train_paths,
-        tokenizer   = tokenizer,
-        window_size = args.window_size,
-        use_msa     = True,
-        stride      = args.stride,
+    train_ds = SimF81Dataset(
+        npz_paths = train_paths,
+        tokenizer = tokenizer,
+        pad_half  = 240,
+        use_msa   = True,
     )
     train_loader = DataLoader(
         train_ds,
         batch_size  = args.batch_size,
         shuffle     = True,
         num_workers = args.num_workers,
-        collate_fn  = collate_windowed_sim_f81,
+        collate_fn  = collate_sim_f81,
         pin_memory  = (args.device == "cuda"),
     )
 
     valid_loader = None
     if args.valid_dir:
-        valid_ds = WindowedSimF81Dataset(
-            npz_paths   = find_npz(args.valid_dir),
-            tokenizer   = tokenizer,
-            window_size = args.window_size,
-            use_msa     = True,
-            stride      = args.stride * 5,
+        valid_ds = SimF81Dataset(
+            npz_paths = find_npz(args.valid_dir),
+            tokenizer = tokenizer,
+            pad_half  = 240,
+            use_msa   = True,
         )
         valid_loader = DataLoader(
             valid_ds,
             batch_size  = args.batch_size,
             shuffle     = False,
             num_workers = args.num_workers,
-            collate_fn  = collate_windowed_sim_f81,
+            collate_fn  = collate_sim_f81,
         )
 
-    print(f"훈련 윈도우 수: {len(train_ds):,}")
+    print(f"훈련 청크 수: {len(train_ds):,}")
 
     # ------------------------------------------------------------------
     # 4. 모델
@@ -166,26 +162,19 @@ def main() -> None:
         n_batches  = 0
 
         for batch in train_loader:
-            input_ids  = batch["input_ids"].to(device)    # (B, W)
-            msa_codes  = batch["msa_codes"].to(device)    # (B, W, S)
-            pi_true    = batch["pi_true"].to(device)      # (B, W, 4)
-            center_idx = batch["center_idx"].to(device)   # (B,)
-            B          = input_ids.shape[0]
+            input_ids  = batch["input_ids"].to(device)    # (B, L+480)
+            msa_codes  = batch["msa_codes"].to(device)    # (B, L, S)
+            pi_true    = batch["pi_true"].to(device)      # (B, L, 4)
+            valid_mask = batch["valid_mask"].to(device)   # (B, L)
 
             optimizer.zero_grad()
-            logits_dict = model(input_ids)   # {'A','C','G','T'}: (B, 1)
-
-            # center column만 loss에 사용
-            c              = center_idx[0].item()           # 항상 240
-            msa_center     = msa_codes[:, c:c+1, :]         # (B, 1, S)
-            pi_true_center = pi_true[:, c:c+1, :]           # (B, 1, 4)
-            valid_center   = torch.ones(B, 1, dtype=torch.bool, device=device)
+            logits_dict = model(input_ids)   # {'A','C','G','T'}: (B, L)
 
             loss = loss_fn(
                 logits_dict = logits_dict,
-                msa_codes   = msa_center,
-                pi_true     = pi_true_center,
-                valid_mask  = valid_center,
+                msa_codes   = msa_codes,
+                pi_true     = pi_true,
+                valid_mask  = valid_mask,
             )
             loss.backward()
             optimizer.step()
@@ -206,16 +195,10 @@ def main() -> None:
                     input_ids  = batch["input_ids"].to(device)
                     msa_codes  = batch["msa_codes"].to(device)
                     pi_true    = batch["pi_true"].to(device)
-                    center_idx = batch["center_idx"].to(device)
-                    B          = input_ids.shape[0]
+                    valid_mask = batch["valid_mask"].to(device)
 
-                    logits_dict    = model(input_ids)
-                    c              = center_idx[0].item()
-                    msa_center     = msa_codes[:, c:c+1, :]
-                    pi_true_center = pi_true[:, c:c+1, :]
-                    valid_center   = torch.ones(B, 1, dtype=torch.bool, device=device)
-
-                    loss = loss_fn(logits_dict, msa_center, pi_true_center, valid_center)
+                    logits_dict = model(input_ids)
+                    loss = loss_fn(logits_dict, msa_codes, pi_true, valid_mask)
                     val_loss += loss.item()
                     val_n    += 1
 

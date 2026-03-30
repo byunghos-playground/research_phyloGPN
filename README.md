@@ -136,8 +136,8 @@ research_phyloGPN/
 │   │   └── supervised_loss.py         # SupervisedPiLoss — KL(π_true || π_pred)
 │   │
 │   ├── data/
-│   │   ├── dataset.py                 # SimF81Dataset (블록 단위 .npz 로더, naive용)
-│   │   ├── windowed_dataset.py        # WindowedSimF81Dataset (sliding window, F81용)
+│   │   ├── dataset.py                 # SimF81Dataset (청크 단위 .npz 로더, 세 모델 공통)
+│   │   ├── windowed_dataset.py        # WindowedSimF81Dataset (현재 미사용 — 실제 게놈 데이터용)
 │   │   └── collate.py                 # DataLoader collate 함수 2종
 │   │
 │   └── utils/
@@ -192,9 +192,10 @@ research_phyloGPN/
   train_naive.sbatch
 ```
 
-**권장 규모**: 100 chunks × 10,000 sites = **1,000,000 sites**
+**권장 규모**: 10,000 chunks × 481 sites (청크당 π 하나)
+- 각 청크 = 독립적인 π 하나 → 다양한 π 커버리지 확보
 - array job은 병렬 실행 → 청크 수와 무관하게 벽시계 ~1시간
-- 분할: train 80블록 (~760K 윈도우) / valid 10블록 / test 10블록
+- 분할: train 8,000 / valid 1,000 / test 1,000 청크
 
 ### 데이터 구조
 
@@ -211,17 +212,18 @@ research_phyloGPN/
 
 ### Step 1+2: 시뮬레이션 + npz 변환
 
-각 사이트마다 독립적인 π를 Dirichlet(1,1,1,1)에서 샘플하여 pyvolve로 241종 시뮬레이션.
+**청크당 π 하나**: 각 청크는 L=481 사이트 전체가 동일한 π ~ Dirichlet(1,1,1,1)에서 생성.
+ref_seq의 empirical frequency가 π 정보를 담아 모델이 context → π 매핑을 학습 가능.
 `simulate.sbatch`가 시뮬레이션과 npz 변환을 한 번에 처리.
 
 ```bash
-# SLURM array job (100 chunks = 1,000,000 사이트 권장)
-sbatch --array=0-99 scripts/simulate.sbatch
+# SLURM array job (10,000 chunks 권장)
+sbatch --array=0-9999 scripts/simulate.sbatch
 
 # 단일 실행 (테스트용)
 python data/simulate/simulate_f81.py \
     --tree_path data/trees/241-mammalian-2020v2.1.nh.txt \
-    --L 10000 \
+    --L 481 \
     --out_prefix data/raw/chunk_000 \
     --seed 0
 python data/simulate/fasta_to_npz.py \
@@ -230,7 +232,7 @@ python data/simulate/fasta_to_npz.py \
     --out   data/processed/block_000.npz
 ```
 
-출력: `data/processed/block_NNN.npz` (100개)
+출력: `data/processed/block_NNN.npz` (청크 수만큼)
 
 ### Step 3: Train/Valid/Test 분할
 
@@ -251,12 +253,14 @@ python data/simulate/split_data.py \
 
 | 모델 | Dataset | 모델 Input | Loss에 필요한 것 |
 |------|---------|-----------|----------------|
-| F81 | `WindowedSimF81Dataset` | ref_seq 481bp window | msa_codes[center, :] + tree |
-| F81 Supervised | `WindowedSimF81Dataset` | ref_seq 481bp window | msa_codes[center, :] + tree + π_true[center] |
-| Naive | `SimF81Dataset` | ref_seq (전체 + pad 480) | π_true (전체) |
+| F81 | `SimF81Dataset` | ref_seq (L + pad 480) | msa_codes[:, :] + tree |
+| F81 Supervised | `SimF81Dataset` | ref_seq (L + pad 480) | msa_codes[:, :] + tree + π_true[:] |
+| Naive | `SimF81Dataset` | ref_seq (L + pad 480) | π_true[:] |
 
-F81 / F81 Supervised는 sliding window 방식: center c마다 윈도우 1개 → π 1개 예측.
-Naive는 블록 전체를 한번에 처리: 블록 1개 → L개 π 예측.
+세 모델 모두 `SimF81Dataset` 사용. 청크 1개 (L=481) → L개 π 예측 → L개 위치 전체에 loss 계산.
+
+> `src/data/windowed_dataset.py` (`WindowedSimF81Dataset`)는 현재 미사용.
+> 향후 실제 게놈 데이터 (긴 서열 + sliding window) 시 재사용 가능.
 
 ### F81
 
