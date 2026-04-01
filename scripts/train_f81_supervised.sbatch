@@ -28,9 +28,8 @@ python train_f81_supervised.py \
     --tree_path   data/trees/241-mammalian-2020v2.1.nh.txt \
     --out_dir     checkpoints/f81_supervised \
     --batch_size  8 \
-    --epochs      1 \
+    --epochs      20 \
     --lr          1e-4 \
-    --stride      1 \
     --num_workers 4
 
 echo "=== F81 Supervised 훈련 완료 ==="
