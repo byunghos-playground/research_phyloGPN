@@ -53,6 +53,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out",      type=str, required=True,  help="출력 .npz 파일 경로")
     p.add_argument("--ref_name", type=str, default=None,
                    help="ref_seq로 사용할 종 이름 (없으면 첫 번째 종)")
+    p.add_argument("--r_file",  type=str, default=None,
+                   help="per-site rate 파일 경로 (exp2_baseline_r용, 없으면 저장 안 함)")
     return p.parse_args()
 
 
@@ -160,15 +162,33 @@ def main() -> None:
     ref_seq = seqs[ref_idx]
     print(f"ref_seq: '{ref_name}' (index {ref_idx})")
 
-    # 5) .npz 저장
+    # 5) r_true 읽기 (--r_file 지정 시)
+    r_true = None
+    if args.r_file is not None:
+        r_list = []
+        with open(args.r_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                r_list.append(float(parts[1]))
+        if len(r_list) != L:
+            raise RuntimeError(f"r 행 수({len(r_list)}) ≠ 서열 길이({L})")
+        r_true = np.asarray(r_list, dtype=np.float32)
+        print(f"r_true 로드: {args.r_file}  shape={r_true.shape}")
+
+    # 6) .npz 저장
     taxon_arr = np.array(taxon_names, dtype=object)
-    np.savez_compressed(
-        args.out,
+    save_dict = dict(
         ref_seq     = ref_seq,
         pi_true     = pi_true,
         msa_codes   = msa_codes,
         taxon_names = taxon_arr,
     )
+    if r_true is not None:
+        save_dict["r_true"] = r_true
+    np.savez_compressed(args.out, **save_dict)
     print(f"저장 완료: {args.out}")
 
 

@@ -1,10 +1,7 @@
 #!/bin/bash --login
-# scripts/train_f81.sbatch
+# scripts/exp4_gc_r/train_f81_supervised_gc.sbatch
 #
-# 모델 A (F81 loss) 훈련 SLURM 스크립트.
-#
-# 제출 방법:
-#   sbatch scripts/train_f81.sbatch
+# [Exp4: gc_r] 모델 F81 Supervised 훈련 (sliding window).
 #
 #SBATCH --time=24:00:00
 #SBATCH --ntasks=1
@@ -13,8 +10,8 @@
 #SBATCH --gpus=1
 #SBATCH --constraint=[intel18|(amr|acm)|nvf|nal|nif|agg|agx|(nfh|neh)]
 #SBATCH -A liulab
-#SBATCH --output=logs/train_f81_%j.out
-#SBATCH --error=logs/train_f81_%j.err
+#SBATCH --output=logs/exp4_gc_r/train_f81_supervised_%j.out
+#SBATCH --error=logs/exp4_gc_r/train_f81_supervised_%j.err
 
 PROJECT=/mnt/research/liulab/RA_lee/projects/research_phyloGPN
 
@@ -23,17 +20,18 @@ module load Miniforge3
 conda activate phylogpn-env
 
 cd ${PROJECT}
-mkdir -p logs
+mkdir -p logs/exp4_gc_r
 
-python train_f81.py \
-    --data_dir    data/processed \
+python train_f81_supervised_gc.py \
+    --data_dir    data/exp4_gc_r/processed \
     --train_ratio 0.8 \
     --valid_ratio 0.1 \
     --tree_path   data/trees/241-mammalian-2020v2.1.nh.txt \
-    --out_dir     checkpoints/f81 \
+    --out_dir     checkpoints/exp4_gc_r/f81_supervised \
     --batch_size  8 \
     --epochs      20 \
     --lr          1e-4 \
-    --num_workers 4
+    --num_workers 4 \
+    --stride      1
 
-echo "=== F81 훈련 완료 ==="
+echo "=== [Exp4] F81 Supervised 훈련 완료 ==="
