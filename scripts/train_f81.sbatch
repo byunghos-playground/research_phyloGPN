@@ -13,6 +13,8 @@
 #SBATCH --gpus=1
 #SBATCH --constraint=[intel18|(amr|acm)|nvf|nal|nif|agg|agx|(nfh|neh)]
 #SBATCH -A liulab
+#SBATCH --output=logs/train_f81_%j.out
+#SBATCH --error=logs/train_f81_%j.err
 
 PROJECT=/mnt/research/liulab/RA_lee/projects/research_phyloGPN
 
@@ -21,10 +23,12 @@ module load Miniforge3
 conda activate phylogpn-env
 
 cd ${PROJECT}
+mkdir -p logs
 
 python train_f81.py \
-    --train_dir   data/train \
-    --valid_dir   data/valid \
+    --data_dir    data/processed \
+    --train_ratio 0.8 \
+    --valid_ratio 0.1 \
     --tree_path   data/trees/241-mammalian-2020v2.1.nh.txt \
     --out_dir     checkpoints/f81 \
     --batch_size  8 \

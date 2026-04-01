@@ -18,8 +18,7 @@ train_f81_supervised.py
 
 Usage:
   python train_f81_supervised.py \\
-    --train_dir   data/train \\
-    --valid_dir   data/valid \\
+    --data_dir    data/processed \\
     --tree_path   data/trees/241-mammalian-2020v2.1.nh.txt \\
     --out_dir     checkpoints/f81_supervised \\
     --batch_size  8 \\
@@ -29,7 +28,9 @@ Usage:
 
 import argparse
 import glob
+import logging
 import os
+import random
 import sys
 
 import numpy as np
@@ -51,8 +52,10 @@ from src.utils.checkpoint        import save_checkpoint, BestModelTracker
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="PhyloGPN 훈련 (F81 supervised loss).")
-    p.add_argument("--train_dir",   type=str, required=True)
-    p.add_argument("--valid_dir",   type=str, default=None)
+    p.add_argument("--data_dir",    type=str, required=True)
+    p.add_argument("--train_ratio", type=float, default=0.8)
+    p.add_argument("--valid_ratio", type=float, default=0.1)
+    p.add_argument("--seed",        type=int,   default=42)
     p.add_argument("--tree_path",   type=str, required=True)
     p.add_argument("--out_dir",     type=str, default="checkpoints/f81_supervised")
     p.add_argument("--batch_size",  type=int, default=8)
@@ -65,17 +68,36 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def find_npz(directory: str):
-    paths = sorted(glob.glob(os.path.join(directory, "*.npz")))
+def split_npz(data_dir: str, train_ratio: float, valid_ratio: float, seed: int):
+    paths = sorted(glob.glob(os.path.join(data_dir, "*.npz")))
     if not paths:
-        raise RuntimeError(f"'{directory}' 에 .npz 파일이 없습니다.")
-    return paths
+        raise RuntimeError(f"'{data_dir}' 에 .npz 파일이 없습니다.")
+    random.seed(seed)
+    random.shuffle(paths)
+    n       = len(paths)
+    n_train = int(n * train_ratio)
+    n_valid = int(n * valid_ratio)
+    return paths[:n_train], paths[n_train:n_train + n_valid]
+
+
+def setup_logger(out_dir: str) -> logging.Logger:
+    logger = logging.getLogger("train_supervised")
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+    fh = logging.FileHandler(os.path.join(out_dir, "train.log"))
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+    return logger
 
 
 def main() -> None:
     args   = parse_args()
     device = torch.device(args.device)
     os.makedirs(args.out_dir, exist_ok=True)
+    log = setup_logger(args.out_dir)
 
     # ------------------------------------------------------------------
     # 1. Tokenizer
@@ -83,20 +105,25 @@ def main() -> None:
     tokenizer = PhyloGPNTokenizer(model_max_length=10 ** 9)
 
     # ------------------------------------------------------------------
-    # 2. 계통수 로드
+    # 2. 데이터 split
     # ------------------------------------------------------------------
-    train_paths = find_npz(args.train_dir)
+    train_paths, valid_paths = split_npz(
+        args.data_dir, args.train_ratio, args.valid_ratio, args.seed
+    )
+    log.info(f"데이터 split: train={len(train_paths)}, valid={len(valid_paths)}")
+
+    # ------------------------------------------------------------------
+    # 3. 계통수 로드
+    # ------------------------------------------------------------------
     first_npz   = np.load(train_paths[0], allow_pickle=True)
     if "taxon_names" not in first_npz:
         raise RuntimeError(f"'{train_paths[0]}' 에 'taxon_names' 없음.")
     leaf_order  = list(map(str, first_npz["taxon_names"]))
     tree_struct = load_tree_struct_from_newick(args.tree_path, leaf_order)
-    print(f"계통수 로드 완료: {tree_struct.n_nodes} 노드, {tree_struct.n_leaves} leaf")
+    log.info(f"계통수 로드 완료: {tree_struct.n_nodes} 노드, {tree_struct.n_leaves} leaf")
 
     # ------------------------------------------------------------------
-    # 3. Dataset / DataLoader
-    #    use_msa=True: F81 likelihood 계산에 alignment 필요
-    #    pi_true도 배치에 포함됨 (SimF81Dataset 기본 포함)
+    # 4. Dataset / DataLoader
     # ------------------------------------------------------------------
     train_ds = SimF81Dataset(
         npz_paths = train_paths,
@@ -114,9 +141,9 @@ def main() -> None:
     )
 
     valid_loader = None
-    if args.valid_dir:
+    if valid_paths:
         valid_ds = SimF81Dataset(
-            npz_paths = find_npz(args.valid_dir),
+            npz_paths = valid_paths,
             tokenizer = tokenizer,
             pad_half  = 240,
             use_msa   = True,
@@ -129,14 +156,14 @@ def main() -> None:
             collate_fn  = collate_sim_f81,
         )
 
-    print(f"훈련 청크 수: {len(train_ds):,}")
+    log.info(f"훈련 청크 수: {len(train_ds):,}")
 
     # ------------------------------------------------------------------
-    # 4. 모델
+    # 5. 모델
     # ------------------------------------------------------------------
     cfg   = PhyloGPNConfig()
     model = PhyloGPNModel(cfg).to(device)
-    print(f"파라미터 수: {sum(p.numel() for p in model.parameters()):,}")
+    log.info(f"파라미터 수: {sum(p.numel() for p in model.parameters()):,}")
 
     # ------------------------------------------------------------------
     # 5. Loss & Optimizer
@@ -206,8 +233,8 @@ def main() -> None:
             tracker.update(avg_valid, model, optimizer, epoch,
                            config=cfg.__dict__)
 
-        print(f"[Epoch {epoch:3d}/{args.epochs}] "
-              f"train={avg_train:.5f}  valid={avg_valid:.5f}")
+        log.info(f"[Epoch {epoch:3d}/{args.epochs}] "
+                 f"train={avg_train:.5f}  valid={avg_valid:.5f}")
 
         save_checkpoint(
             path      = os.path.join(args.out_dir, f"epoch_{epoch:03d}.pt"),
@@ -218,7 +245,7 @@ def main() -> None:
             config    = cfg.__dict__,
         )
 
-    print("훈련 완료.")
+    log.info("훈련 완료.")
 
 
 if __name__ == "__main__":

@@ -24,17 +24,18 @@ train_naive.py
 
 Usage:
   python train_naive.py \\
-    --train_dir  data/train \\
-    --valid_dir  data/valid \\
+    --data_dir   data/processed \\
     --out_dir    checkpoints/naive \\
-    --batch_size 4 \\
+    --batch_size 8 \\
     --epochs     20 \\
     --lr         1e-4
 """
 
 import argparse
 import glob
+import logging
 import os
+import random
 import sys
 
 import torch
@@ -55,12 +56,14 @@ from src.utils.math_f81       import logits_dict_to_pi
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="PhyloGPN naive supervised 훈련.")
-    p.add_argument("--train_dir",   type=str, required=True)
-    p.add_argument("--valid_dir",   type=str, default=None)
+    p.add_argument("--data_dir",    type=str, required=True)
+    p.add_argument("--train_ratio", type=float, default=0.8)
+    p.add_argument("--valid_ratio", type=float, default=0.1)
+    p.add_argument("--seed",        type=int,   default=42)
     p.add_argument("--out_dir",     type=str, default="checkpoints/naive")
-    p.add_argument("--batch_size",   type=int, default=8)
-    p.add_argument("--epochs",       type=int, default=20)
-    p.add_argument("--lr",           type=float, default=1e-4)
+    p.add_argument("--batch_size",  type=int, default=8)
+    p.add_argument("--epochs",      type=int, default=20)
+    p.add_argument("--lr",          type=float, default=1e-4)
     p.add_argument("--num_workers", type=int, default=2)
     p.add_argument("--device",      type=str,
                    default="cuda" if torch.cuda.is_available() else "cpu")
@@ -68,28 +71,52 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def find_npz(directory: str):
-    paths = sorted(glob.glob(os.path.join(directory, "*.npz")))
+def split_npz(data_dir: str, train_ratio: float, valid_ratio: float, seed: int):
+    paths = sorted(glob.glob(os.path.join(data_dir, "*.npz")))
     if not paths:
-        raise RuntimeError(f"'{directory}' 에 .npz 파일이 없습니다.")
-    return paths
+        raise RuntimeError(f"'{data_dir}' 에 .npz 파일이 없습니다.")
+    random.seed(seed)
+    random.shuffle(paths)
+    n       = len(paths)
+    n_train = int(n * train_ratio)
+    n_valid = int(n * valid_ratio)
+    return paths[:n_train], paths[n_train:n_train + n_valid]
+
+
+def setup_logger(out_dir: str) -> logging.Logger:
+    logger = logging.getLogger("train_naive")
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+    fh = logging.FileHandler(os.path.join(out_dir, "train.log"))
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+    return logger
 
 
 def main() -> None:
     args   = parse_args()
     device = torch.device(args.device)
     os.makedirs(args.out_dir, exist_ok=True)
+    log = setup_logger(args.out_dir)
 
     # ------------------------------------------------------------------
-    # 1. Tokenizer & Dataset
+    # 1. 데이터 split & Dataset
     # ------------------------------------------------------------------
     tokenizer = PhyloGPNTokenizer(model_max_length=10 ** 9)
 
+    train_paths, valid_paths = split_npz(
+        args.data_dir, args.train_ratio, args.valid_ratio, args.seed
+    )
+    log.info(f"데이터 split: train={len(train_paths)}, valid={len(valid_paths)}")
+
     train_ds = SimF81Dataset(
-        npz_paths = find_npz(args.train_dir),
+        npz_paths = train_paths,
         tokenizer = tokenizer,
         pad_half  = 240,
-        use_msa   = False,   # supervised: alignment 불필요
+        use_msa   = False,
     )
     train_loader = DataLoader(
         train_ds,
@@ -101,9 +128,9 @@ def main() -> None:
     )
 
     valid_loader = None
-    if args.valid_dir:
+    if valid_paths:
         valid_ds = SimF81Dataset(
-            npz_paths = find_npz(args.valid_dir),
+            npz_paths = valid_paths,
             tokenizer = tokenizer,
             pad_half  = 240,
             use_msa   = False,
@@ -116,14 +143,14 @@ def main() -> None:
             collate_fn  = collate_sim_f81,
         )
 
-    print(f"훈련 청크 수: {len(train_ds):,}")
+    log.info(f"훈련 청크 수: {len(train_ds):,}")
 
     # ------------------------------------------------------------------
     # 2. 모델 & Loss & Optimizer
     # ------------------------------------------------------------------
     cfg   = PhyloGPNConfig()
     model = PhyloGPNModel(cfg).to(device)
-    print(f"파라미터 수: {sum(p.numel() for p in model.parameters()):,}")
+    log.info(f"파라미터 수: {sum(p.numel() for p in model.parameters()):,}")
 
     loss_fn   = SupervisedPiLoss()
     optimizer = AdamW(model.parameters(), lr=args.lr)
@@ -186,8 +213,8 @@ def main() -> None:
             tracker.update(avg_valid, model, optimizer, epoch,
                            config=cfg.__dict__)
 
-        print(f"[Epoch {epoch:3d}/{args.epochs}] "
-              f"train={avg_train:.5f}  valid={avg_valid:.5f}")
+        log.info(f"[Epoch {epoch:3d}/{args.epochs}] "
+                 f"train={avg_train:.5f}  valid={avg_valid:.5f}")
 
         save_checkpoint(
             path      = os.path.join(args.out_dir, f"epoch_{epoch:03d}.pt"),
@@ -198,7 +225,7 @@ def main() -> None:
             config    = cfg.__dict__,
         )
 
-    print("훈련 완료.")
+    log.info("훈련 완료.")
 
 
 if __name__ == "__main__":

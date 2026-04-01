@@ -13,6 +13,8 @@
 #SBATCH --gpus=1
 #SBATCH --constraint=[intel18|(amr|acm)|nvf|nal|nif|agg|agx|(nfh|neh)]
 #SBATCH -A liulab
+#SBATCH --output=logs/train_naive_%j.out
+#SBATCH --error=logs/train_naive_%j.err
 
 PROJECT=/mnt/research/liulab/RA_lee/projects/research_phyloGPN
 
@@ -21,13 +23,15 @@ module load Miniforge3
 conda activate phylogpn-env
 
 cd ${PROJECT}
+mkdir -p logs
 
 python train_naive.py \
-    --train_dir   data/train \
-    --valid_dir   data/valid \
+    --data_dir    data/processed \
+    --train_ratio 0.8 \
+    --valid_ratio 0.1 \
     --out_dir     checkpoints/naive \
     --batch_size  8 \
-    --epochs      1 \
+    --epochs      20 \
     --lr          1e-4 \
     --num_workers 4
 
