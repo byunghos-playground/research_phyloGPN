@@ -147,8 +147,9 @@ def main():
 
         for batch in train_loader:
             input_ids  = batch["input_ids"].to(device)
-            pi_true    = batch["pi_true"].to(device)
-            valid_mask = batch["valid_mask"].to(device)
+            c          = batch["center_idx"][0].item()
+            pi_true    = batch["pi_true"].to(device)[:, c:c+1, :]
+            valid_mask = batch["valid_mask"].to(device)[:, c:c+1]
 
             optimizer.zero_grad()
             logits_dict = model(input_ids)
@@ -170,8 +171,9 @@ def main():
             with torch.no_grad():
                 for batch in valid_loader:
                     input_ids  = batch["input_ids"].to(device)
-                    pi_true    = batch["pi_true"].to(device)
-                    valid_mask = batch["valid_mask"].to(device)
+                    c          = batch["center_idx"][0].item()
+                    pi_true    = batch["pi_true"].to(device)[:, c:c+1, :]
+                    valid_mask = batch["valid_mask"].to(device)[:, c:c+1]
                     logits_dict = model(input_ids)
                     pi_pred = logits_dict_to_pi(logits_dict)
                     loss = loss_fn(pi_pred, pi_true, valid_mask)
