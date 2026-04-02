@@ -32,6 +32,7 @@ python train_f81_supervised_gc.py \
     --epochs      20 \
     --lr          1e-4 \
     --num_workers 4 \
-    --stride      1
+    --stride      481 \
+    --block_length 10000
 
 echo "=== [Exp4] F81 Supervised 훈련 완료 ==="

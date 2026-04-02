@@ -32,6 +32,7 @@ python train_f81_gc.py \
     --epochs      20 \
     --lr          1e-4 \
     --num_workers 4 \
-    --stride      1
+    --stride      481 \
+    --block_length 10000
 
 echo "=== [Exp3] F81 훈련 완료 ==="

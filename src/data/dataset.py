@@ -58,6 +58,7 @@ class SimF81Dataset(Dataset):
         tokenizer: Optional[PhyloGPNTokenizer] = None,
         pad_half:  int  = 240,      # 481 // 2
         use_msa:   bool = False,
+        cache:     bool = True,     # False: on-demand loading (대용량 genome용)
     ):
         super().__init__()
 
@@ -77,11 +78,13 @@ class SimF81Dataset(Dataset):
         self.use_msa   = use_msa
 
         # 전체 블록을 메모리에 미리 로드 (디스크 I/O 병목 제거)
-        print(f"블록 캐시 로딩 중... ({len(self.npz_paths)}개 파일)")
-        self._cache: List[Dict[str, Any]] = [
-            self._load_block(i) for i in range(len(self.npz_paths))
-        ]
-        print("캐시 완료.")
+        # cache=False이면 on-demand loading (대용량 genome 파일용)
+        if cache:
+            print(f"블록 캐시 로딩 중... ({len(self.npz_paths)}개 파일)")
+            self._cache: List[Dict[str, Any]] = [
+                self._load_block(i) for i in range(len(self.npz_paths))
+            ]
+            print("캐시 완료.")
 
     def __len__(self) -> int:
         return len(self.npz_paths)

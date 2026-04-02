@@ -1,22 +1,17 @@
 #!/bin/bash --login
 # scripts/exp3_gc/simulate.sbatch
 #
-# [Exp3: gc] GC OU process 기반 연속 π 변화 시뮬레이션. rate variation 없음.
-# GC(x) ~ OU(mu=0.41, sigma=0.07, theta=1/100000), π(x) = f(GC(x)).
-# 각 파일 = 긴 genome 서열, sliding window로 훈련 시 분해.
+# [Exp3: gc] GC OU process + F81 시뮬레이션 (rate variation 없음).
+# GC(x) ~ OU(μ=0.41, σ=0.07, θ=1/5000), L=10,000 bp per genome.
 #
 # [규모]
-#   --array=0-999  → 1,000 jobs × 10 genomes = 10,000 genomes
-#   genome ID: job_id * 10 + i  (00000 ~ 09999)
-#
-# [전체 파이프라인]
-#   1. sbatch --array=0-999 scripts/exp3_gc/simulate.sbatch
-#   2. sbatch scripts/exp3_gc/train_f81_gc.sbatch  (+ supervised, naive)
+#   --array=0-99  → 100 jobs × 30 genomes = 3,000 genomes
+#   genome ID: job_id * 30 + i  (00000 ~ 02999)
 #
 #SBATCH --time=04:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem-per-cpu=32G
+#SBATCH --mem-per-cpu=16G
 #SBATCH -A liulab
 
 PROJECT=/mnt/research/liulab/RA_lee/projects/research_phyloGPN
@@ -30,7 +25,7 @@ conda activate phylogpn-env
 
 mkdir -p ${RAW_DIR} ${PROCESSED_DIR}
 
-GENOMES_PER_JOB=10
+GENOMES_PER_JOB=30
 
 for i in $(seq 0 $((GENOMES_PER_JOB - 1))); do
     GLOBAL_ID=$((SLURM_ARRAY_TASK_ID * GENOMES_PER_JOB + i))
@@ -41,13 +36,14 @@ for i in $(seq 0 $((GENOMES_PER_JOB - 1))); do
 
     python ${PROJECT}/data/simulate/simulate_exp3_gc.py \
         --tree_path  ${TREE} \
+        --L          10000 \
         --out_prefix ${PREFIX} \
         --seed       ${GLOBAL_ID}
 
     python ${PROJECT}/data/simulate/fasta_to_npz.py \
-        --fasta ${PREFIX}.fasta \
-        --pi    ${PREFIX}_pi.txt \
-        --out   ${PROCESSED_DIR}/genome_${GENOME_ID}.npz
+        --fasta  ${PREFIX}.fasta \
+        --pi     ${PREFIX}_pi.txt \
+        --out    ${PROCESSED_DIR}/genome_${GENOME_ID}.npz
 
     echo "=== Genome ${GENOME_ID} 완료 ==="
 done

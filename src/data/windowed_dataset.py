@@ -29,7 +29,7 @@ WindowedSimF81Dataset: PhyloGPN 원본 스타일 sliding-window 데이터셋.
   - stride > 1 로 설정하면 훈련 데이터 수를 줄일 수 있음
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -59,11 +59,13 @@ class WindowedSimF81Dataset(Dataset):
 
     def __init__(
         self,
-        npz_paths:   List[str],
-        tokenizer:   PhyloGPNTokenizer,
-        window_size: int  = 481,
-        use_msa:     bool = True,
-        stride:      int  = 1,
+        npz_paths:    List[str],
+        tokenizer:    PhyloGPNTokenizer,
+        window_size:  int           = 481,
+        use_msa:      bool          = True,
+        stride:       int           = 1,
+        cache:        bool          = True,
+        block_length: Optional[int] = None,  # 모든 genome이 같은 길이면 지정 (on-demand 시 필수)
     ):
         super().__init__()
         assert window_size % 2 == 1, "window_size는 홀수여야 합니다 (예: 481)."
@@ -80,14 +82,18 @@ class WindowedSimF81Dataset(Dataset):
             tokenizer = tokenizer,
             pad_half  = 0,
             use_msa   = use_msa,
+            cache     = cache,
         )
 
         # (block_idx, center_pos) 인덱스 테이블 생성
-        # 각 블록의 모든 center 위치를 stride 간격으로 열거
+        # block_length 지정 시 파일 로드 없이 인덱스 구성 (on-demand 모드용)
         self._index: List[Tuple[int, int]] = []
         for b_idx in range(len(self.base)):
-            block = self.base._load_block(b_idx)
-            L     = len(block["ref_seq"])
+            if block_length is not None:
+                L = block_length
+            else:
+                block = self.base._load_block(b_idx)
+                L     = len(block["ref_seq"])
             for center in range(0, L, stride):
                 self._index.append((b_idx, center))
 

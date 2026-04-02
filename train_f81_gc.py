@@ -19,6 +19,7 @@ Usage:
 
 import argparse
 import glob
+import json
 import logging
 import os
 import random
@@ -53,8 +54,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--epochs",       type=int, default=20)
     p.add_argument("--lr",           type=float, default=1e-4)
     p.add_argument("--num_workers",  type=int, default=2)
-    p.add_argument("--stride",       type=int, default=1, help="sliding window 보폭")
-    p.add_argument("--window_size",  type=int, default=481)
+    p.add_argument("--stride",        type=int, default=1, help="sliding window 보폭")
+    p.add_argument("--window_size",   type=int, default=481)
+    p.add_argument("--block_length",  type=int, default=None,
+                   help="genome 고정 길이 지정 시 on-demand loading 활성화 (exp3/exp4용)")
     p.add_argument("--device",       type=str,
                    default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--resume",       type=str, default=None)
@@ -70,7 +73,7 @@ def split_npz(data_dir, train_ratio, valid_ratio, seed):
     n = len(paths)
     n_train = int(n * train_ratio)
     n_valid = int(n * valid_ratio)
-    return paths[:n_train], paths[n_train:n_train + n_valid]
+    return paths[:n_train], paths[n_train:n_train + n_valid], paths[n_train + n_valid:]
 
 
 def setup_logger(out_dir):
@@ -94,22 +97,27 @@ def main():
 
     tokenizer = PhyloGPNTokenizer(model_max_length=10 ** 9)
 
-    train_paths, valid_paths = split_npz(
+    train_paths, valid_paths, test_paths = split_npz(
         args.data_dir, args.train_ratio, args.valid_ratio, args.seed
     )
-    log.info(f"데이터 split: train={len(train_paths)} genomes, valid={len(valid_paths)} genomes")
+    log.info(f"데이터 split: train={len(train_paths)}, valid={len(valid_paths)}, test={len(test_paths)} genomes")
+    with open(os.path.join(args.out_dir, "split.json"), "w") as f:
+        json.dump({"train": train_paths, "valid": valid_paths, "test": test_paths}, f)
 
     first_npz  = np.load(train_paths[0], allow_pickle=True)
     leaf_order = list(map(str, first_npz["taxon_names"]))
     tree_struct = load_tree_struct_from_newick(args.tree_path, leaf_order)
     log.info(f"계통수 로드 완료: {tree_struct.n_nodes} 노드, {tree_struct.n_leaves} leaf")
 
+    use_cache = args.block_length is None
     train_ds = WindowedSimF81Dataset(
-        npz_paths   = train_paths,
-        tokenizer   = tokenizer,
-        window_size = args.window_size,
-        use_msa     = True,
-        stride      = args.stride,
+        npz_paths    = train_paths,
+        tokenizer    = tokenizer,
+        window_size  = args.window_size,
+        use_msa      = True,
+        stride       = args.stride,
+        cache        = use_cache,
+        block_length = args.block_length,
     )
     train_loader = DataLoader(
         train_ds,
@@ -123,11 +131,13 @@ def main():
     valid_loader = None
     if valid_paths:
         valid_ds = WindowedSimF81Dataset(
-            npz_paths   = valid_paths,
-            tokenizer   = tokenizer,
-            window_size = args.window_size,
-            use_msa     = True,
-            stride      = args.stride,
+            npz_paths    = valid_paths,
+            tokenizer    = tokenizer,
+            window_size  = args.window_size,
+            use_msa      = True,
+            stride       = args.stride,
+            cache        = use_cache,
+            block_length = args.block_length,
         )
         valid_loader = DataLoader(
             valid_ds,
