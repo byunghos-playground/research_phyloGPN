@@ -34,7 +34,7 @@ from src.models.configuration          import PhyloGPNConfig
 from src.models.model                  import PhyloGPNModel
 from src.models.tokenizer              import PhyloGPNTokenizer
 from src.data.windowed_dataset         import WindowedSimF81Dataset
-from src.data.collate                  import collate_sim_f81
+from src.data.collate                  import collate_windowed_sim_f81
 from src.losses.f81_supervised_loss    import F81SupervisedLoss
 from src.utils.tree_utils              import load_tree_struct_from_newick
 from src.utils.checkpoint              import save_checkpoint, BestModelTracker
@@ -115,7 +115,7 @@ def main():
     )
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
-        num_workers=args.num_workers, collate_fn=collate_sim_f81,
+        num_workers=args.num_workers, collate_fn=collate_windowed_sim_f81,
         pin_memory=(args.device == "cuda"),
     )
 
@@ -128,7 +128,7 @@ def main():
         )
         valid_loader = DataLoader(
             valid_ds, batch_size=args.batch_size, shuffle=False,
-            num_workers=args.num_workers, collate_fn=collate_sim_f81,
+            num_workers=args.num_workers, collate_fn=collate_windowed_sim_f81,
         )
 
     log.info(f"훈련 window 수: {len(train_ds):,}")

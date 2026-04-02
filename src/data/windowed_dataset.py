@@ -9,7 +9,7 @@ WindowedSimF81Dataset: PhyloGPN 원본 스타일 sliding-window 데이터셋.
   향후 실제 게놈 데이터 (긴 서열에서 sliding window 필요) 시 재사용 가능.
 
 [Sliding Window 방식]
-  각 블록(길이 L)의 모든 위치 center ∈ [0, L-1] 에 대해
+  각 블록(길이 L)의 유효 위치 center ∈ [pad_half, L-pad_half) 에 대해
   길이 window_size(=481)의 윈도우를 생성.
 
   윈도우 [center-pad_half, center+pad_half] 범위에서:
@@ -94,7 +94,7 @@ class WindowedSimF81Dataset(Dataset):
             else:
                 block = self.base._load_block(b_idx)
                 L     = len(block["ref_seq"])
-            for center in range(0, L, stride):
+            for center in range(self.pad_half, L - self.pad_half, stride):
                 self._index.append((b_idx, center))
 
     def __len__(self) -> int:
