@@ -34,3 +34,6 @@ venv/
 # pyvolve 부산물
 *.log
 *.info
+# OMC / IDE
+.omc/
+.DS_Store
