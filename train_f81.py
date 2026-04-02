@@ -25,6 +25,7 @@ Usage:
 
 import argparse
 import glob
+import json
 import logging
 import os
 import random
@@ -76,7 +77,7 @@ def split_npz(data_dir: str, train_ratio: float, valid_ratio: float, seed: int):
     n       = len(paths)
     n_train = int(n * train_ratio)
     n_valid = int(n * valid_ratio)
-    return paths[:n_train], paths[n_train:n_train + n_valid]
+    return paths[:n_train], paths[n_train:n_train + n_valid], paths[n_train + n_valid:]
 
 
 def setup_logger(out_dir: str) -> logging.Logger:
@@ -108,10 +109,12 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 2. 데이터 split
     # ------------------------------------------------------------------
-    train_paths, valid_paths = split_npz(
+    train_paths, valid_paths, test_paths = split_npz(
         args.data_dir, args.train_ratio, args.valid_ratio, args.seed
     )
-    log.info(f"데이터 split: train={len(train_paths)}, valid={len(valid_paths)}")
+    log.info(f"데이터 split: train={len(train_paths)}, valid={len(valid_paths)}, test={len(test_paths)}")
+    with open(os.path.join(args.out_dir, "split.json"), "w") as f:
+        json.dump({"train": train_paths, "valid": valid_paths, "test": test_paths}, f)
 
     # ------------------------------------------------------------------
     # 3. 계통수 로드
