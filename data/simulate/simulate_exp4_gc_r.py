@@ -41,8 +41,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--theta",      type=float, default=1/5000)
     p.add_argument("--gc_min",     type=float, default=0.30)
     p.add_argument("--gc_max",     type=float, default=0.65)
-    p.add_argument("--rate_shape", type=float, default=0.5,
+    p.add_argument("--rate_shape",   type=float, default=0.5,
                    help="Gamma shape for per-site rate (기본값: 0.5)")
+    p.add_argument("--branch_scale", type=float, default=1.0,
+                   help="branch length multiplier (기본값 1.0)")
     return p.parse_args()
 
 
@@ -65,7 +67,8 @@ def gc_to_pi(gc: np.ndarray) -> np.ndarray:
 
 def f81_forward_simulate(tree: ete3.Tree,
                          pi_per_site: np.ndarray,
-                         rates: np.ndarray) -> dict:
+                         rates: np.ndarray,
+                         branch_scale: float = 1.0) -> dict:
     """
     Position-varying π + per-site rate로 F81 forward simulation.
 
@@ -87,7 +90,7 @@ def f81_forward_simulate(tree: ete3.Tree,
 
         else:
             parent_states = node_states[id(node.up)]
-            t = float(node.dist)
+            t = float(node.dist) * branch_scale
 
             exp_rt = np.exp(-rates * t)                              # (L,)
             probs  = pi_per_site * (1.0 - exp_rt[:, None])          # (L, 4)
@@ -138,7 +141,7 @@ def main() -> None:
 
     # 4) Forward simulation
     print(f"시뮬레이션 실행 중 ({args.L} 사이트, {len(leaf_order)} 종)...")
-    leaf_seqs = f81_forward_simulate(tree, pi_per_site, rates)
+    leaf_seqs = f81_forward_simulate(tree, pi_per_site, rates, branch_scale=args.branch_scale)
 
     # 5) FASTA 저장
     aln_path = f"{args.out_prefix}.fasta"

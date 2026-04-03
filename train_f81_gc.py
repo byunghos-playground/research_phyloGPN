@@ -63,6 +63,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume",       type=str, default=None)
     p.add_argument("--no_conditioning", action="store_true",
                    help="conditioning term 제거 (log π_ref 페널티 없음)")
+    p.add_argument("--branch_scale", type=float, default=1.0,
+                   help="tree branch length multiplier")
     return p.parse_args()
 
 
@@ -108,7 +110,8 @@ def main():
 
     first_npz  = np.load(train_paths[0], allow_pickle=True)
     leaf_order = list(map(str, first_npz["taxon_names"]))
-    tree_struct = load_tree_struct_from_newick(args.tree_path, leaf_order)
+    tree_struct = load_tree_struct_from_newick(args.tree_path, leaf_order,
+                                               branch_scale=args.branch_scale)
     log.info(f"계통수 로드 완료: {tree_struct.n_nodes} 노드, {tree_struct.n_leaves} leaf")
 
     use_cache = args.block_length is None

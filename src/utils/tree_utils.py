@@ -77,6 +77,7 @@ class TreeStruct:
 def load_tree_struct_from_newick(
     newick_path:      str,
     leaf_order_names: List[str],
+    branch_scale:     float = 1.0,
 ) -> TreeStruct:
     """
     Newick 파일을 읽어 TreeStruct 반환.
@@ -117,7 +118,7 @@ def load_tree_struct_from_newick(
             p_idx = node_index[node.up]
             parent[idx]        = p_idx
             children[p_idx].append(idx)
-            branch_length[idx] = float(node.dist)
+            branch_length[idx] = float(node.dist) * branch_scale
 
     # leaf 이름 → 노드 인덱스 매핑
     leaf_name_to_idx = {
