@@ -63,7 +63,8 @@ from src.utils.checkpoint      import load_checkpoint
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="모델 평가: π_pred vs π_true.")
     p.add_argument("--checkpoint",  type=str, required=True,  help="체크포인트 경로")
-    p.add_argument("--test_dir",    type=str, required=True,  help="테스트 .npz 디렉토리")
+    p.add_argument("--test_dir",    type=str, default=None,   help="테스트 .npz 디렉토리")
+    p.add_argument("--split_json",  type=str, default=None,   help="split.json 경로 (test 키에서 경로 읽기)")
     p.add_argument("--model_name",  type=str, default="model", help="결과 파일 이름용")
     p.add_argument("--out_dir",     type=str, default="results")
     p.add_argument("--batch_size",  type=int, default=4)
@@ -138,9 +139,17 @@ def main() -> None:
     # 2. 테스트 데이터
     # ------------------------------------------------------------------
     tokenizer = PhyloGPNTokenizer(model_max_length=10 ** 9)
-    npz_paths = sorted(glob.glob(os.path.join(args.test_dir, "*.npz")))
-    if not npz_paths:
-        raise RuntimeError(f"'{args.test_dir}' 에 .npz 없음.")
+    if args.split_json:
+        with open(args.split_json) as f:
+            npz_paths = json.load(f)["test"]
+        if not npz_paths:
+            raise RuntimeError(f"'{args.split_json}' 의 test 목록이 비어 있음.")
+    elif args.test_dir:
+        npz_paths = sorted(glob.glob(os.path.join(args.test_dir, "*.npz")))
+        if not npz_paths:
+            raise RuntimeError(f"'{args.test_dir}' 에 .npz 없음.")
+    else:
+        raise RuntimeError("--test_dir 또는 --split_json 중 하나를 지정해야 합니다.")
 
     test_ds = SimF81Dataset(
         npz_paths = npz_paths,
