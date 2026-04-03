@@ -64,11 +64,13 @@ class F81LikelihoodLoss(nn.Module):
         log(0) 방지용 clamp 하한.
     """
 
-    def __init__(self, tree_struct, mu: float = 1.0, eps: float = 1e-12):
+    def __init__(self, tree_struct, mu: float = 1.0, eps: float = 1e-12,
+                 use_conditioning: bool = True):
         super().__init__()
-        self.tree   = tree_struct
-        self.mu     = mu
-        self.eps    = eps
+        self.tree              = tree_struct
+        self.mu                = mu
+        self.eps               = eps
+        self.use_conditioning  = use_conditioning
 
     def forward(
         self,
@@ -131,9 +133,13 @@ class F81LikelihoodLoss(nn.Module):
         # valid이고 ref 염기가 known인 위치에만 conditioning 적용
         log_pi_ref = torch.log(pi_ref.clamp(min=self.eps)) * (valid_mask & known_ref).float()
 
-        # 5) 총 loss = NLL + conditioning, 유효 사이트 평균
-        loss_per_site = -loglik * valid_mask.float() + log_pi_ref
-        n_valid       = valid_mask.sum()
+        # 5) 총 loss = NLL (+ conditioning), 유효 사이트 평균
+        nll = -loglik * valid_mask.float()
+        if self.use_conditioning:
+            loss_per_site = nll + log_pi_ref
+        else:
+            loss_per_site = nll
+        n_valid = valid_mask.sum()
         if n_valid == 0:
             return loss_per_site.mean()
         return loss_per_site.sum() / n_valid

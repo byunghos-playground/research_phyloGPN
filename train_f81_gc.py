@@ -61,6 +61,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device",       type=str,
                    default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--resume",       type=str, default=None)
+    p.add_argument("--no_conditioning", action="store_true",
+                   help="conditioning term 제거 (log π_ref 페널티 없음)")
     return p.parse_args()
 
 
@@ -153,7 +155,8 @@ def main():
     model = PhyloGPNModel(cfg).to(device)
     log.info(f"파라미터 수: {sum(p.numel() for p in model.parameters()):,}")
 
-    loss_fn   = F81LikelihoodLoss(tree_struct=tree_struct)
+    loss_fn   = F81LikelihoodLoss(tree_struct=tree_struct,
+                                  use_conditioning=not args.no_conditioning)
     optimizer = AdamW(model.parameters(), lr=args.lr)
 
     start_epoch = 1
