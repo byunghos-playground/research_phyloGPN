@@ -157,27 +157,54 @@ def main() -> None:
     print(f"총 평가 사이트 수: {len(pi_pred_all):,}")
 
     # ------------------------------------------------------------------
-    # 4. 지표 계산 & 출력
+    # 4. 지표 계산 & 저장
     # ------------------------------------------------------------------
     metrics = compute_metrics(pi_pred_all, pi_true_all)
+    n_sites = len(pi_pred_all)
 
-    print("\n=== 평가 결과 ===")
-    print(f"  MAE (A/C/G/T): "
-          f"{metrics['mae_A']:.4f} / {metrics['mae_C']:.4f} / "
-          f"{metrics['mae_G']:.4f} / {metrics['mae_T']:.4f}")
-    print(f"  MAE mean     : {metrics['mae_mean']:.4f}")
-    print(f"  Pearson r (A/C/G/T): "
-          f"{metrics['pearson_A']:.4f} / {metrics['pearson_C']:.4f} / "
-          f"{metrics['pearson_G']:.4f} / {metrics['pearson_T']:.4f}")
-    print(f"  Pearson r (all)    : {metrics['pearson_all']:.4f}")
-    print(f"  KL(true||pred) mean: {metrics['kl_mean']:.6f}")
+    lines = [
+        f"=== {args.model_name} 평가 결과 ===",
+        f"평가 사이트 수: {n_sites:,}",
+        "",
+        "MAE (낮을수록 좋음)",
+        f"  A : {metrics['mae_A']:.4f}",
+        f"  C : {metrics['mae_C']:.4f}",
+        f"  G : {metrics['mae_G']:.4f}",
+        f"  T : {metrics['mae_T']:.4f}",
+        f"  전체 평균: {metrics['mae_mean']:.4f}",
+        "",
+        "Pearson r (높을수록 좋음, 최대 1.0)",
+        f"  A : {metrics['pearson_A']:.4f}",
+        f"  C : {metrics['pearson_C']:.4f}",
+        f"  G : {metrics['pearson_G']:.4f}",
+        f"  T : {metrics['pearson_T']:.4f}",
+        f"  전체 (4N 쌍): {metrics['pearson_all']:.4f}",
+        "",
+        f"KL(π_true || π_pred) 평균: {metrics['kl_mean']:.6f}  (낮을수록 좋음)",
+        "",
+        "─" * 60,
+        "[데이터 및 평가 방법]",
+        "  - 실험: GC OU process 기반 position-varying π 시뮬레이션 (exp3/4)",
+        "  - 입력: genome 10,000bp에서 stride=481 sliding window로 뽑은 481bp 구간",
+        "  - 모델 출력: 481bp → valid conv (RF=481) → center 1 position의 π 예측",
+        "  - 비교: π_pred (모델 예측) vs π_true (시뮬레이션에 사용된 실제 stationary freq)",
+        "",
+        "[각 지표 의미]",
+        "  MAE        : 예측한 각 염기 빈도와 실제 빈도의 절대 오차 평균.",
+        "               0에 가까울수록 정확. 무작위 예측 시 약 0.125.",
+        "  Pearson r  : π_pred와 π_true 간 선형 상관계수.",
+        "               1.0이면 완벽한 양의 상관, 0이면 무관계.",
+        "               모델이 π의 상대적 변화를 잘 추적하는지 반영.",
+        "  KL divergence: KL(π_true || π_pred). π_true 분포 관점에서",
+        "               π_pred가 얼마나 다른지. 0이면 완벽 일치.",
+    ]
 
-    # ------------------------------------------------------------------
-    # 5. JSON 저장
-    # ------------------------------------------------------------------
-    out_path = os.path.join(args.out_dir, f"eval_{args.model_name}.json")
+    report = "\n".join(lines)
+    print(report)
+
+    out_path = os.path.join(args.out_dir, f"eval_{args.model_name}.txt")
     with open(out_path, "w") as f:
-        json.dump(metrics, f, indent=2)
+        f.write(report + "\n")
     print(f"\n결과 저장: {out_path}")
 
 
