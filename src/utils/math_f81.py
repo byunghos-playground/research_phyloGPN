@@ -23,6 +23,10 @@ F81 모델에 필요한 수학 함수 모음.
     → 수정: root도 내부 노드와 동일하게 처리 (P_edge[root]는 사용하지 않음)
   - 구버전: B × L Python 이중 for loop → 매우 느림
     → 수정: 모든 (B, L) 쌍을 동시에 처리하는 vectorized 구현으로 교체
+  - 구버전: per-node rescaling 없음 → 247 species에서 float32 underflow
+    → L_root ≈ 0, site_prob.clamp(eps)에 걸려 loss 항상 -log(1e-12) ≈ 27.6 고정
+    → gradient = 0 → 학습 불가
+    → 수정: 각 내부 노드에서 amax 기반 rescaling + log_scale_acc 누적
 """
 
 from typing import Dict, Optional
@@ -142,9 +146,19 @@ def f81_site_loglik_vectorized(
 
     # -----------------------------------------------------------------------
     # Step 3. Felsenstein pruning (postorder: leaves → root)
+    #         + per-node rescaling (numerical stability for large trees)
+    #
+    # 문제: 내부 노드마다 lik = lik * contrib 를 반복하면
+    #       247 species에서 float32 underflow → lik ≈ 0 → gradient = 0.
+    #
+    # 해결: 각 내부 노드에서 lik을 최대값으로 나누고 log(최대값)을 누적.
+    #       loglik = log(π · L_root_rescaled) + log_scale_acc
+    #       값은 수학적으로 동일하고, gradient는 log(π · L_root_rescaled) 항을 통해 흐름.
+    #       scale은 .detach()로 분리 — rescaling은 수치 안정화 목적이므로
+    #       gradient path에 포함시키면 불필요한 복잡도만 늘어남.
     # -----------------------------------------------------------------------
-    # [수정] root를 skip하지 않음 — root도 내부 노드와 같은 방식으로 처리.
-    # root는 P_edge[root]를 사용하지 않으므로 안전.
+    log_scale_acc = torch.zeros(B, L, dtype=dtype, device=device)
+
     for node in tree.postorder:
         children = tree.children[node]
         if not children:
@@ -163,15 +177,17 @@ def f81_site_loglik_vectorized(
             contrib = (1.0 - e) * dot + e * L_child             # (B, L, 4)
             lik     = lik * contrib
 
-        L_node[node] = lik
+        # Per-node rescaling: max across 4 states, detached
+        scale         = lik.amax(dim=-1, keepdim=True).clamp(min=eps).detach()
+        log_scale_acc = log_scale_acc + scale.squeeze(-1).log()
+        L_node[node]  = lik / scale
 
     # -----------------------------------------------------------------------
     # Step 4. Root에서 site probability 계산
     # -----------------------------------------------------------------------
-    L_root   = L_node[root]                     # (B, L, 4)
-    site_prob = (pi * L_root).sum(dim=-1)       # (B, L)
-    site_prob = site_prob.clamp(min=eps)
-    loglik    = torch.log(site_prob)            # (B, L)
+    L_root    = L_node[root]                               # (B, L, 4)
+    site_prob = (pi * L_root).sum(dim=-1).clamp(min=eps)  # (B, L)
+    loglik    = site_prob.log() + log_scale_acc            # (B, L)
 
     # valid_mask=False 위치는 0으로
     if valid_mask is not None:
