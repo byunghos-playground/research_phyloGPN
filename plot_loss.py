@@ -1,0 +1,137 @@
+"""
+plot_loss.py
+
+exp3~6 훈련 loss curve 시각화.
+checkpoints/{exp}/{model}/train.log 파싱 → PNG 저장.
+
+Usage:
+  python plot_loss.py [--out_dir results/loss_curves] [--exps exp3_gc exp4_gc_r ...]
+"""
+
+import argparse
+import os
+import re
+import sys
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# log line 패턴: [Epoch  3/20] train=0.12345  valid=0.12345
+LOG_RE = re.compile(
+    r"\[Epoch\s+(\d+)/\d+\]\s+train=([\d.naninf]+)\s+valid=([\d.naninf]+)"
+)
+
+MODELS = ["f81", "f81_supervised", "naive"]
+MODEL_LABELS = {"f81": "F81", "f81_supervised": "F81-Supervised", "naive": "Naive"}
+MODEL_COLORS = {"f81": "#1f77b4", "f81_supervised": "#ff7f0e", "naive": "#2ca02c"}
+
+
+def parse_log(log_path):
+    """train.log → {epoch: int, train: float, valid: float} 리스트."""
+    records = []
+    if not os.path.exists(log_path):
+        return records
+    with open(log_path) as f:
+        for line in f:
+            m = LOG_RE.search(line)
+            if m:
+                epoch = int(m.group(1))
+                train = float(m.group(2)) if m.group(2) not in ("nan", "inf") else float("nan")
+                valid = float(m.group(3)) if m.group(3) not in ("nan", "inf") else float("nan")
+                records.append({"epoch": epoch, "train": train, "valid": valid})
+    return records
+
+
+def plot_exp(exp, ckpt_root, out_dir):
+    """한 실험의 3개 모델 loss curve를 하나의 figure에."""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle(f"{exp}  —  Loss Curves", fontsize=14)
+
+    for model in MODELS:
+        log_path = os.path.join(ckpt_root, exp, model, "train.log")
+        records  = parse_log(log_path)
+        if not records:
+            print(f"  [SKIP] {log_path} 없음 또는 비어있음")
+            continue
+
+        epochs = [r["epoch"] for r in records]
+        trains = [r["train"] for r in records]
+        valids = [r["valid"] for r in records]
+        color  = MODEL_COLORS[model]
+        label  = MODEL_LABELS[model]
+
+        axes[0].plot(epochs, trains, color=color, label=label, marker="o", markersize=3)
+        axes[1].plot(epochs, valids, color=color, label=label, marker="o", markersize=3)
+        print(f"  {exp}/{model}: {len(records)} epochs, "
+              f"final train={trains[-1]:.5f}, valid={valids[-1]:.5f}")
+
+    for ax, title in zip(axes, ["Train Loss", "Valid Loss"]):
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.set_title(title)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    out_path = os.path.join(out_dir, f"loss_{exp}.png")
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"  → 저장: {out_path}")
+
+
+def plot_all_exps(exps, ckpt_root, out_dir):
+    """모든 실험을 한 figure에 (모델별 subrow)."""
+    n_exps   = len(exps)
+    n_models = len(MODELS)
+    fig, axes = plt.subplots(n_models, 2, figsize=(14, 4 * n_models))
+    fig.suptitle("All Experiments — Train / Valid Loss", fontsize=14)
+
+    for row, model in enumerate(MODELS):
+        for col, split in enumerate(["train", "valid"]):
+            ax = axes[row, col]
+            ax.set_title(f"{MODEL_LABELS[model]}  —  {split.capitalize()} Loss")
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+            ax.grid(True, alpha=0.3)
+
+            for exp in exps:
+                log_path = os.path.join(ckpt_root, exp, model, "train.log")
+                records  = parse_log(log_path)
+                if not records:
+                    continue
+                epochs = [r["epoch"] for r in records]
+                vals   = [r[split]  for r in records]
+                ax.plot(epochs, vals, label=exp, marker="o", markersize=3)
+
+            ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    out_path = os.path.join(out_dir, "loss_all_exps.png")
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"전체 비교 → 저장: {out_path}")
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--ckpt_root", default="checkpoints",
+                   help="checkpoints 루트 디렉토리")
+    p.add_argument("--out_dir",   default="results/loss_curves")
+    p.add_argument("--exps", nargs="+",
+                   default=["exp3_gc", "exp4_gc_r", "exp5_gc", "exp6_gc_r"])
+    args = p.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
+
+    for exp in args.exps:
+        print(f"\n=== {exp} ===")
+        plot_exp(exp, args.ckpt_root, args.out_dir)
+
+    print("\n=== 전체 비교 ===")
+    plot_all_exps(args.exps, args.ckpt_root, args.out_dir)
+
+    print("\n완료.")
+
+
+if __name__ == "__main__":
+    main()
