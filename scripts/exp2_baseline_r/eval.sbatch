@@ -22,34 +22,15 @@ module purge
 module load Miniforge3
 conda activate phylogpn-env
 
-cd ${PROJECT}
-mkdir -p logs/exp2_baseline_r results/exp2_baseline_r
+cd ${PROJECT} && mkdir -p logs/exp2_baseline_r results/exp2_baseline_r
 
-echo "=== [Exp2] F81 평가 ==="
-python evaluate.py \
-    --checkpoint checkpoints/exp2_baseline_r/f81/best.pt \
-    --split_json checkpoints/exp2_baseline_r/f81/split.json \
-    --model_name exp2_f81 \
-    --out_dir    results/exp2_baseline_r \
-    --batch_size 8 \
-    --num_workers 4
-
-echo "=== [Exp2] F81-Supervised 평가 ==="
-python evaluate.py \
-    --checkpoint checkpoints/exp2_baseline_r/f81_supervised/best.pt \
-    --split_json checkpoints/exp2_baseline_r/f81/split.json \
-    --model_name exp2_f81_supervised \
-    --out_dir    results/exp2_baseline_r \
-    --batch_size 8 \
-    --num_workers 4
-
-echo "=== [Exp2] Naive 평가 ==="
-python evaluate.py \
-    --checkpoint checkpoints/exp2_baseline_r/naive/best.pt \
-    --split_json checkpoints/exp2_baseline_r/f81/split.json \
-    --model_name exp2_naive \
-    --out_dir    results/exp2_baseline_r \
-    --batch_size 8 \
-    --num_workers 4
+for MODEL in f81 f81_supervised naive; do
+    python evaluate.py \
+        --checkpoint checkpoints/exp2_baseline_r/${MODEL}/best.pt \
+        --split_json checkpoints/exp2_baseline_r/f81/split.json \
+        --model_name exp2_${MODEL} \
+        --out_dir    results/exp2_baseline_r \
+        --batch_size 8 --num_workers 4
+done
 
 echo "=== [Exp2] 평가 완료 ==="

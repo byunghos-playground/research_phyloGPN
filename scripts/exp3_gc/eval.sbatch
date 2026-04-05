@@ -22,40 +22,15 @@ module purge
 module load Miniforge3
 conda activate phylogpn-env
 
-cd ${PROJECT}
-mkdir -p logs/exp3_gc results/exp3_gc
+cd ${PROJECT} && mkdir -p logs/exp3_gc results/exp3_gc
 
-echo "=== [Exp3] F81 평가 ==="
-python evaluate_gc.py \
-    --checkpoint  checkpoints/exp3_gc/f81/best.pt \
-    --split_json  checkpoints/exp3_gc/f81/split.json \
-    --model_name  exp3_f81 \
-    --out_dir     results/exp3_gc \
-    --batch_size  8 \
-    --stride      481 \
-    --block_length 10000 \
-    --num_workers 4
-
-echo "=== [Exp3] F81-Supervised 평가 ==="
-python evaluate_gc.py \
-    --checkpoint  checkpoints/exp3_gc/f81_supervised/best.pt \
-    --split_json  checkpoints/exp3_gc/f81/split.json \
-    --model_name  exp3_f81_supervised \
-    --out_dir     results/exp3_gc \
-    --batch_size  8 \
-    --stride      481 \
-    --block_length 10000 \
-    --num_workers 4
-
-echo "=== [Exp3] Naive 평가 ==="
-python evaluate_gc.py \
-    --checkpoint  checkpoints/exp3_gc/naive/best.pt \
-    --split_json  checkpoints/exp3_gc/f81/split.json \
-    --model_name  exp3_naive \
-    --out_dir     results/exp3_gc \
-    --batch_size  8 \
-    --stride      481 \
-    --block_length 10000 \
-    --num_workers 4
+for MODEL in f81 f81_supervised naive; do
+    python evaluate_gc.py \
+        --checkpoint  checkpoints/exp3_gc/${MODEL}/best.pt \
+        --split_json  checkpoints/exp3_gc/f81/split.json \
+        --model_name  exp3_${MODEL} \
+        --out_dir     results/exp3_gc \
+        --batch_size  8 --stride 481 --block_length 10000 --num_workers 4
+done
 
 echo "=== [Exp3] 평가 완료 ==="
