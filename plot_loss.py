@@ -24,6 +24,11 @@ LOG_RE = re.compile(
 MODELS = ["f81", "f81_supervised", "naive"]
 MODEL_LABELS = {"f81": "F81", "f81_supervised": "F81-Supervised", "naive": "Naive"}
 MODEL_COLORS = {"f81": "#1f77b4", "f81_supervised": "#ff7f0e", "naive": "#2ca02c"}
+MODEL_YLABELS = {
+    "f81":            "-log P_F81(aln|π_pred,T) + log π_ref",
+    "f81_supervised": "log P_F81(aln|π_true,T) - log P_F81(aln|π_pred,T)",
+    "naive":          "KL(π_true || π_pred)",
+}
 
 
 def parse_log(log_path):
@@ -63,34 +68,40 @@ def parse_log(log_path):
 
 
 def plot_exp(exp, ckpt_root, out_dir):
-    """한 실험의 3개 모델 loss curve를 하나의 figure에."""
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    """한 실험의 3개 모델 loss curve — 모델별 row (별도 y축), train/valid col."""
+    fig, axes = plt.subplots(len(MODELS), 2, figsize=(12, 4 * len(MODELS)))
     fig.suptitle(f"{exp}  —  Loss Curves", fontsize=14)
 
-    for model in MODELS:
+    for row, model in enumerate(MODELS):
         log_path = os.path.join(ckpt_root, exp, model, "train.log")
         records  = parse_log(log_path)
-        if not records:
+        color    = MODEL_COLORS[model]
+        label    = MODEL_LABELS[model]
+        ylabel   = MODEL_YLABELS[model]
+
+        for col, split in enumerate(["train", "valid"]):
+            ax = axes[row, col]
+            ax.set_title(f"{label}  —  {split.capitalize()}", fontsize=10)
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel(ylabel, fontsize=7)
+            ax.grid(True, alpha=0.3)
+
+            if not records:
+                ax.text(0.5, 0.5, "log 없음", transform=ax.transAxes,
+                        ha="center", va="center", color="gray")
+                continue
+
+            epochs = [r["epoch"] for r in records]
+            vals   = [r[split]   for r in records]
+            ax.plot(epochs, vals, color=color, marker="o", markersize=3)
+
+        if records:
+            trains = [r["train"] for r in records]
+            valids = [r["valid"] for r in records]
+            print(f"  {exp}/{model}: {len(records)} epochs, "
+                  f"final train={trains[-1]:.5f}, valid={valids[-1]:.5f}")
+        else:
             print(f"  [SKIP] {log_path} 없음 또는 비어있음")
-            continue
-
-        epochs = [r["epoch"] for r in records]
-        trains = [r["train"] for r in records]
-        valids = [r["valid"] for r in records]
-        color  = MODEL_COLORS[model]
-        label  = MODEL_LABELS[model]
-
-        axes[0].plot(epochs, trains, color=color, label=label, marker="o", markersize=3)
-        axes[1].plot(epochs, valids, color=color, label=label, marker="o", markersize=3)
-        print(f"  {exp}/{model}: {len(records)} epochs, "
-              f"final train={trains[-1]:.5f}, valid={valids[-1]:.5f}")
-
-    for ax, title in zip(axes, ["Train Loss", "Valid Loss"]):
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Loss")
-        ax.set_title(title)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
     out_path = os.path.join(out_dir, f"loss_{exp}.png")
@@ -111,7 +122,7 @@ def plot_all_exps(exps, ckpt_root, out_dir):
             ax = axes[row, col]
             ax.set_title(f"{MODEL_LABELS[model]}  —  {split.capitalize()} Loss")
             ax.set_xlabel("Epoch")
-            ax.set_ylabel("Loss")
+            ax.set_ylabel(MODEL_YLABELS[model], fontsize=7)
             ax.grid(True, alpha=0.3)
 
             for exp in exps:
