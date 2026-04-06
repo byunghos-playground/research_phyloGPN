@@ -27,19 +27,39 @@ MODEL_COLORS = {"f81": "#1f77b4", "f81_supervised": "#ff7f0e", "naive": "#2ca02c
 
 
 def parse_log(log_path):
-    """train.log → {epoch: int, train: float, valid: float} 리스트."""
-    records = []
+    """train.log → {epoch: int, train: float, valid: float} 리스트.
+
+    재훈련으로 log가 이어붙여진 경우 epoch 번호가 리셋되면
+    새 run으로 간주하고 마지막 run만 반환.
+    """
     if not os.path.exists(log_path):
-        return records
+        return []
+
+    runs = []
+    current = []
     with open(log_path) as f:
         for line in f:
             m = LOG_RE.search(line)
-            if m:
-                epoch = int(m.group(1))
-                train = float(m.group(2)) if m.group(2) not in ("nan", "inf") else float("nan")
-                valid = float(m.group(3)) if m.group(3) not in ("nan", "inf") else float("nan")
-                records.append({"epoch": epoch, "train": train, "valid": valid})
-    return records
+            if not m:
+                continue
+            epoch = int(m.group(1))
+            train = float(m.group(2)) if m.group(2) not in ("nan", "inf") else float("nan")
+            valid = float(m.group(3)) if m.group(3) not in ("nan", "inf") else float("nan")
+            # epoch가 리셋되면 (새 run 시작)
+            if current and epoch <= current[-1]["epoch"]:
+                runs.append(current)
+                current = []
+            current.append({"epoch": epoch, "train": train, "valid": valid})
+    if current:
+        runs.append(current)
+
+    if not runs:
+        return []
+
+    if len(runs) > 1:
+        print(f"  [INFO] {os.path.basename(os.path.dirname(log_path))}/train.log: "
+              f"{len(runs)} runs 감지, 마지막 run ({len(runs[-1])} epochs) 사용")
+    return runs[-1]
 
 
 def plot_exp(exp, ckpt_root, out_dir):
