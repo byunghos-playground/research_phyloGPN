@@ -21,6 +21,85 @@ F81 phylogenetic loss framework를 **시뮬레이션 데이터**로 검증하는
 
 ---
 
+## Loss 설계 — PIML 관점
+
+### 왜 이게 진짜 Physics-Informed ML인가
+
+세 모델 중 F81과 F81 Supervised는 **F81 evolutionary model + Felsenstein pruning**을 loss 수식 안에 직접 사용한다. 진화 모델이 regularizer나 사전지식이 아니라 **학습 신호 그 자체**다.
+
+#### Felsenstein pruning이 계산하는 것
+
+247종 Zoonomia 계통수 T와 모델이 예측한 π가 주어졌을 때, alignment column y의 likelihood:
+
+```
+P_F81(y | π, T) = Σ_{s_root} π(s_root) × Π_{branch} P_F81(child | parent, t, π)
+```
+
+F81 transition probability (branch length t):
+```
+P(child=j | parent=i, t) = π_j × (1 - exp(-t))  +  δ_{ij} × exp(-t)
+```
+
+- t → 0: 자식 = 부모 (변화 없음)
+- t → ∞: 자식 ~ π (stationary distribution)
+
+247종이면 246번 확률을 곱하므로 float32 underflow 위험 → 각 내부 노드에서 amax rescaling + log-scale 누적으로 해결 (`math_f81.py`).
+
+---
+
+### 세 가지 Loss 상세
+
+#### 1. F81 (PIML, π_true 없이 학습)
+
+```
+L = -(1/n) Σ log P_F81(alignment | π_pred, T)  +  (1/n) Σ log π_ref(π_pred)
+     ←── Felsenstein NLL ──→                        ←── conditioning ──→
+```
+
+- **모델 입력**: 481bp ref_seq window
+- **모델 출력**: π_pred (4값, A/C/G/T 빈도)
+- **학습 신호**: "이 π_pred로 계산한 F81 likelihood가 실제 247종 MSA를 얼마나 잘 설명하는가"
+- **π_true 사용 안 함** — alignment + tree만으로 학습
+
+**conditioning term** `+ log π_ref`의 역할:
+ref_seq는 MSA의 leaf 0에도 포함되므로, 모델이 ref 염기에 π mass를 몰아주면 P_F81이 인위적으로 높아지는 shortcut이 생긴다. conditioning term은 그 염기의 π가 클수록 loss를 높여 이 shortcut을 penalize한다.
+
+#### 2. F81 Supervised (π_true를 likelihood를 통해 간접 사용)
+
+```
+L = log P_F81(alignment | π_true, T)  -  log P_F81(alignment | π_pred, T)
+    ←── oracle likelihood (상수) ──→      ←── 모델 예측 likelihood ──→
+```
+
+- minimize → π_pred가 π_true와 같은 alignment likelihood를 내도록 학습
+- π_true를 직접 비교하지 않고 **likelihood를 통해 간접적으로** 활용
+- gradient는 π_pred 항에만 흐름 (π_true는 detach)
+
+#### 3. Naive (직접 supervised baseline)
+
+```
+L = KL(π_true || π_pred)
+```
+
+- alignment도 tree도 사용하지 않음
+- π_true를 직접 supervision signal로 사용
+- 비교 기준: "evolutionary signal 없이 π_true만 알아도 이만큼 맞힌다"
+
+---
+
+### PIML 관점 비교
+
+| | F81 | F81 Supervised | Naive |
+|--|-----|----------------|-------|
+| 진화 모델 사용 | ✓ (loss가 F81 likelihood) | ✓ (loss가 F81 likelihood) | ✗ |
+| 계통수 사용 | ✓ (Zoonomia 247종) | ✓ (Zoonomia 247종) | ✗ |
+| π_true 사용 | ✗ | ✓ (간접, likelihood 통해) | ✓ (직접) |
+| PIML 정도 | 순수 PIML | PIML + supervision | 순수 supervised |
+
+> FIREFLY의 "phylogenetic bias"는 sequence similarity에서 학습된 attention bias로, 진화 모델이 loss 안에 없다. 반면 F81 loss는 Felsenstein pruning이 loss 수식에 직접 포함되어 있어 더 엄밀한 의미의 PIML이다.
+
+---
+
 ## 여섯 가지 실험
 
 | 실험 | π 설계 | rate | branch_scale | 데이터셋 클래스 | shortcut |
