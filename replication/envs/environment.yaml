@@ -1,15 +1,17 @@
 name: phylogpn-replication
 channels:
+  - pytorch
+  - nvidia
   - conda-forge
   - bioconda
   - defaults
 dependencies:
   - python=3.10
   - pip
-  # deep learning
+  # deep learning (nvidia 채널 필요)
   - pytorch::pytorch=2.1.*
   - pytorch::torchvision
-  - pytorch::pytorch-cuda=11.8
+  - pytorch::pytorch-cuda=12.1
   # bioinformatics
   - bioconda::cyvcf2
   - bioconda::pyfaidx
