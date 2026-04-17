@@ -31,11 +31,12 @@ else
     echo "[1/3] hg38 already exists, skipping."
 fi
 
-# bgzip + samtools faidx for random access
+# pyfaidx로 인덱스 생성 (samtools 불필요)
 if [ ! -f "$HG38_DIR/hg38.fa.fai" ]; then
-    echo "  Decompressing and indexing hg38..."
+    echo "  Decompressing hg38..."
     gunzip -c "$HG38_DIR/hg38.fa.gz" > "$HG38_DIR/hg38.fa"
-    samtools faidx "$HG38_DIR/hg38.fa"
+    echo "  Indexing hg38 with pyfaidx..."
+    python -c "from pyfaidx import Fasta; Fasta('$HG38_DIR/hg38.fa'); print('  Index done.')"
 fi
 
 # ─────────────────────────────────────────────
