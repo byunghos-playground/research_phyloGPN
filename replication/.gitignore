@@ -1,0 +1,24 @@
+# 원본/처리된 데이터 (용량 큼)
+data/raw/hg38/*.fa
+data/raw/hg38/*.fa.gz
+data/raw/hg38/*.fai
+data/raw/clinvar/*.vcf.gz
+data/raw/clinvar/*.tbi
+data/raw/omim/*.xlsx
+data/raw/gnomad/*.vcf.bgz
+data/raw/gnomad/*.vcf.gz
+data/raw/gnomad/*.tbi
+
+# 처리 결과
+data/processed/*.parquet
+data/processed/gnomad/
+
+# 모델 예측 결과
+results/preds/**/*.parquet
+results/figures/
+
+# 로그
+logs/
+
+# .gitkeep 은 추적 유지
+!**/.gitkeep
