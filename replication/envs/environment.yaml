@@ -35,5 +35,4 @@ dependencies:
     - accelerate
     # GPN package (song lab)
     - git+https://github.com/songlab-cal/gpn.git
-    # Caduceus
-    - caduceus-dna
+    # Caduceus: trust_remote_code=True로 HuggingFace에서 직접 로드, 별도 설치 불필요
