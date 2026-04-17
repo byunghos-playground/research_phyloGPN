@@ -29,7 +29,7 @@ dependencies:
   - ipykernel
   - pip:
     # HuggingFace
-    - transformers>=4.38.0
+    - transformers>=4.38.0,<4.44.0
     - datasets>=2.18.0
     - huggingface-hub
     - accelerate
