@@ -72,18 +72,25 @@ def compute_llr_batch(
         max_length=LEFT_CONTEXT,
     )
     input_ids = enc["input_ids"].to(device)
-    attention_mask = enc["attention_mask"].to(device)
+    # HyenaDNA tokenizer는 attention_mask를 반환하지 않을 수 있음
+    attention_mask = enc.get("attention_mask", None)
+    if attention_mask is not None:
+        attention_mask = attention_mask.to(device)
 
     with torch.no_grad():
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-    # logits: (B, L, vocab) — 마지막 유효 토큰의 next-token 예측 사용
+        if attention_mask is not None:
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+        else:
+            outputs = model(input_ids=input_ids)
     logits = outputs.logits  # causal LM: logits[i, t] = P(t+1 | 0..t)
 
     results = []
     for i, (ref, alt) in enumerate(zip(refs, alts)):
-        # 패딩을 제외한 실제 마지막 토큰 위치
-        seq_len = attention_mask[i].sum().item()
-        last_pos = seq_len - 1  # 마지막 유효 토큰 위치
+        if attention_mask is not None:
+            seq_len = attention_mask[i].sum().item()
+        else:
+            seq_len = input_ids.shape[1]
+        last_pos = seq_len - 1
 
         ref_id = tokenizer.convert_tokens_to_ids(ref.upper())
         alt_id = tokenizer.convert_tokens_to_ids(alt.upper())

@@ -8,10 +8,7 @@ channels:
 dependencies:
   - python=3.10
   - pip
-  # deep learning (nvidia 채널 필요)
-  - pytorch::pytorch=2.1.*
-  - pytorch::torchvision
-  - pytorch::pytorch-cuda=12.1
+  # PyTorch: pip으로 설치 (CUDA 라이브러리 번들, 시스템 CUDA 모듈 불필요)
   # bioinformatics
   - bioconda::cyvcf2
   - bioconda::pyfaidx
@@ -29,7 +26,9 @@ dependencies:
   - ipykernel
   - pip:
     # HuggingFace
-    - transformers>=4.38.0,<4.44.0
+    - torch==2.1.2+cu121 --index-url https://download.pytorch.org/whl/cu121
+    - torchvision==0.16.2+cu121 --index-url https://download.pytorch.org/whl/cu121
+    - transformers>=4.38.0,<4.40.0
     - datasets>=2.18.0
     - huggingface-hub
     - accelerate
