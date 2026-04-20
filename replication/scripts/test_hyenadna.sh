@@ -1,4 +1,6 @@
 #!/bin/bash
+export HF_HOME=/mnt/research/liulab/RA_lee/.cache/huggingface
+export TRANSFORMERS_CACHE=/mnt/research/liulab/RA_lee/.cache/huggingface
 PY=/mnt/research/liulab/RA_lee/.conda/envs/phylogpn-replication/bin/python3
 PROJECT=/mnt/research/liulab/RA_lee/projects/research_phyloGPN
 
