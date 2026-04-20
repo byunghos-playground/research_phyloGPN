@@ -85,6 +85,9 @@ def compute_llr_batch(
     return results
 
 
+CHECKPOINT_INTERVAL = 100_000
+
+
 def run_vep(args):
     device = args.device if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
@@ -95,8 +98,17 @@ def run_vep(args):
     df = pd.read_parquet(args.variants)
     print(f"Variants: {len(df):,}")
 
-    llrs = []
+    ckpt_path = args.out + ".ckpt.parquet"
+    llr_map = {}
+    if os.path.exists(ckpt_path):
+        ckpt = pd.read_parquet(ckpt_path)
+        llr_map = dict(zip(ckpt["idx"], ckpt["llr"]))
+        print(f"체크포인트 로드: {len(llr_map):,}개 이어서 시작")
+
+    done = set(llr_map.keys())
+    llrs = list(llr_map.items())
     batch_seqs, batch_refs, batch_alts, batch_idx = [], [], [], []
+    processed = len(done)
 
     def flush():
         if not batch_seqs:
@@ -107,28 +119,39 @@ def run_vep(args):
         batch_seqs.clear(); batch_refs.clear()
         batch_alts.clear(); batch_idx.clear()
 
+    def save_checkpoint():
+        pd.DataFrame(llrs, columns=["idx", "llr"]).to_parquet(ckpt_path, index=False)
+
     for i, row in tqdm(df.iterrows(), total=len(df), desc="PhyloGPN VEP"):
+        if i in done:
+            continue
+
         seq = extract_seq(genome, str(row.chrom), int(row.pos), WINDOW)
         if seq is None or len(seq) != WINDOW:
             llrs.append((i, None))
-            continue
+        else:
+            batch_seqs.append(seq)
+            batch_refs.append(row.ref)
+            batch_alts.append(row.alt)
+            batch_idx.append(i)
 
-        batch_seqs.append(seq)
-        batch_refs.append(row.ref)
-        batch_alts.append(row.alt)
-        batch_idx.append(i)
+            if len(batch_seqs) >= args.batch_size:
+                flush()
 
-        if len(batch_seqs) >= args.batch_size:
+        processed += 1
+        if processed % CHECKPOINT_INTERVAL == 0:
             flush()
+            save_checkpoint()
 
     flush()
 
-    # 원본 df에 LLR 컬럼 추가
     llr_map = {idx: score for idx, score in llrs}
     df["llr_phylogpn"] = [llr_map.get(i) for i in df.index]
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     df.to_parquet(args.out, index=False)
+    if os.path.exists(ckpt_path):
+        os.remove(ckpt_path)
     valid = df["llr_phylogpn"].notna().sum()
     print(f"\n완료: {valid:,}/{len(df):,} 변이 스코어링됨")
     print(f"저장: {args.out}")

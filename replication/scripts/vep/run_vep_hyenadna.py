@@ -29,6 +29,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "LongSafari/hyenadna-medium-160k-seqlen-hf"
 LEFT_CONTEXT = 999  # 변이 위치 직전까지 1000bp (변이 포함 X)
+CHECKPOINT_INTERVAL = 100_000
 
 
 def load_model(device: str):
@@ -116,8 +117,17 @@ def run_vep(args):
     df = pd.read_parquet(args.variants)
     print(f"Variants: {len(df):,}")
 
-    llrs = []
+    ckpt_path = args.out + ".ckpt.parquet"
+    llr_map = {}
+    if os.path.exists(ckpt_path):
+        ckpt = pd.read_parquet(ckpt_path)
+        llr_map = dict(zip(ckpt["idx"], ckpt["llr"]))
+        print(f"체크포인트 로드: {len(llr_map):,}개 이어서 시작")
+
+    done = set(llr_map.keys())
+    llrs = list(llr_map.items())
     batch = {"contexts": [], "refs": [], "alts": [], "idx": []}
+    processed = len(done)
 
     def flush():
         if not batch["contexts"]:
@@ -131,19 +141,29 @@ def run_vep(args):
         for k in batch:
             batch[k].clear()
 
+    def save_checkpoint():
+        pd.DataFrame(llrs, columns=["idx", "llr"]).to_parquet(ckpt_path, index=False)
+
     for i, row in tqdm(df.iterrows(), total=len(df), desc="HyenaDNA VEP"):
+        if i in done:
+            continue
+
         ctx = extract_left_context(genome, str(row.chrom), int(row.pos), LEFT_CONTEXT)
         if ctx is None:
             llrs.append((i, None))
-            continue
+        else:
+            batch["contexts"].append(ctx)
+            batch["refs"].append(row.ref)
+            batch["alts"].append(row.alt)
+            batch["idx"].append(i)
 
-        batch["contexts"].append(ctx)
-        batch["refs"].append(row.ref)
-        batch["alts"].append(row.alt)
-        batch["idx"].append(i)
+            if len(batch["contexts"]) >= args.batch_size:
+                flush()
 
-        if len(batch["contexts"]) >= args.batch_size:
+        processed += 1
+        if processed % CHECKPOINT_INTERVAL == 0:
             flush()
+            save_checkpoint()
 
     flush()
 
@@ -152,6 +172,8 @@ def run_vep(args):
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     df.to_parquet(args.out, index=False)
+    if os.path.exists(ckpt_path):
+        os.remove(ckpt_path)
     valid = df["llr_hyenadna"].notna().sum()
     print(f"\n완료: {valid:,}/{len(df):,}")
     print(f"저장: {args.out}")
