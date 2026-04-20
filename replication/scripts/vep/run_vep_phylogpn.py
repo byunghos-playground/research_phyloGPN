@@ -68,18 +68,18 @@ def compute_llr_batch(
     input_ids = enc["input_ids"].to(device)
 
     with torch.no_grad():
-        logits_batch = model(input_ids)   # list of dicts {A,C,G,T: Tensor[L]}
+        logit_dict = model(input_ids)   # {'A': Tensor[batch, L], 'C': ..., 'G': ..., 'T': ...}
 
     results = []
-    center = PAD_HALF  # index 240 in the unpadded seq = center of window
+    center = PAD_HALF + PAD_HALF  # padded sequence에서 center: 240 + 240 = 480
 
-    for i, logit_dict in enumerate(logits_batch):
+    for i in range(len(seqs)):
         ref = refs[i].upper()
         alt = alts[i].upper()
         if ref not in logit_dict or alt not in logit_dict:
             results.append(None)
             continue
-        llr = (logit_dict[alt][center] - logit_dict[ref][center]).item()
+        llr = (logit_dict[alt][i, center] - logit_dict[ref][i, center]).item()
         results.append(llr)
 
     return results
