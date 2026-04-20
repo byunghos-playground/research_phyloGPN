@@ -1,7 +1,7 @@
 """
 scripts/vep/run_vep_hyenadna.py
 
-HyenaDNA (LongSafari/hyenadna-large-1m-seqlen-hf) variant effect prediction.
+HyenaDNA (LongSafari/hyenadna-medium-160k-seqlen-hf) variant effect prediction.
 
 HyenaDNA는 인과적(causal) 언어 모델이므로, 변이 위치의 조건부 log-likelihood로 LLR 계산:
   LLR = log P(alt | left_context) - log P(ref | left_context)
@@ -27,7 +27,7 @@ from pyfaidx import Fasta
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-MODEL_ID = "LongSafari/hyenadna-large-1m-seqlen-hf"
+MODEL_ID = "LongSafari/hyenadna-medium-160k-seqlen-hf"
 LEFT_CONTEXT = 999  # 변이 위치 직전까지 1000bp (변이 포함 X)
 
 

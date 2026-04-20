@@ -18,6 +18,9 @@
 #SBATCH --output=replication/logs/vep_nt_%j.out
 #SBATCH --error=replication/logs/vep_nt_%j.err
 
+export HF_HOME=/mnt/research/liulab/RA_lee/.cache/huggingface
+export TRANSFORMERS_CACHE=/mnt/research/liulab/RA_lee/.cache/huggingface
+
 PROJECT=/mnt/research/liulab/RA_lee/projects/research_phyloGPN
 
 module purge
